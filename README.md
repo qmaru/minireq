@@ -2,6 +2,16 @@
 
 简单的 HTTP 封装，仅包括 Get / Post
 
+## Feature
++ Set Headers
++ Set Params
++ Set S5 Proxy
++ HTTP Basic Auth
++ JSON Body
++ Form Body
++ Output Raw Data
++ Output JSON Data
+
 ## Example
 ### 1. GET
 ```go
@@ -84,7 +94,7 @@ fdata := minireq.FileData{
     },
 }
 request.Post(
-    "http://example.com/auth",
+    "http://example.com/files",
     fdata,
 )
 ```
