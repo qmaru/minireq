@@ -57,6 +57,13 @@ type MiniResponse struct {
 	rawJSON interface{}
 }
 
+// NoRedirect 取消自动重定向
+func (mr *MiniRequest) NoRedirect() {
+	mr.Client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+}
+
 // Proxy 设置Socks5代理
 //	eg: 127.0.0.1:1080
 func (mr *MiniRequest) Proxy(proxyURL string) {
