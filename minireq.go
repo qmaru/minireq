@@ -162,6 +162,7 @@ func (mr *MiniRequest) setOption(opt interface{}) {
 	case JSONData:
 		bytesData, _ := json.Marshal(t)
 		reader := bytes.NewReader(bytesData)
+		mr.Request.Header.Set("Content-Type", "application/json")
 		mr.Request.Body = ioutil.NopCloser(reader)
 	case FormData:
 		p := mr.Request.URL.Query()
@@ -169,6 +170,7 @@ func (mr *MiniRequest) setOption(opt interface{}) {
 			p.Add(k, v)
 		}
 		reader := strings.NewReader(p.Encode())
+		mr.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		mr.Request.Body = ioutil.NopCloser(reader)
 	case FileData:
 		mr.setFile(t)
