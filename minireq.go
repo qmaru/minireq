@@ -3,7 +3,6 @@ package minireq
 import (
 	"bytes"
 	"encoding/json"
-	"golang.org/x/net/proxy"
 	"io"
 	"io/ioutil"
 	"log"
@@ -16,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/net/proxy"
 )
 
 // DefaultVer 版本号
@@ -55,59 +56,6 @@ type MiniResponse struct {
 	RawReq  *MiniRequest
 	rawData []byte
 	rawJSON interface{}
-}
-
-// NoRedirect 取消自动重定向
-func (mr *MiniRequest) NoRedirect() {
-	mr.Client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		return http.ErrUseLastResponse
-	}
-}
-
-// Proxy 设置Socks5代理
-//	eg: 127.0.0.1:1080
-func (mr *MiniRequest) Proxy(proxyURL string) {
-	dialer, err := proxy.SOCKS5("tcp", proxyURL,
-		nil,
-		&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		},
-	)
-	if err != nil {
-		log.Panic(" [S5 Proxy Error]: ", err)
-	}
-
-	mr.Client.Transport = &http.Transport{
-		Proxy:               nil,
-		Dial:                dialer.Dial,
-		TLSHandshakeTimeout: 30 * time.Second,
-	}
-}
-
-// Requests 设置默认的HTTP客户端
-//	1.默认的UserAgent: MiniRequest
-//	2.自动保存Cookies
-//	3.超时时间30秒
-func Requests() *MiniRequest {
-	req := new(MiniRequest)
-
-	cookieJar, err := cookiejar.New(nil)
-	if err != nil {
-		panic(err)
-	}
-	req.Request = &http.Request{
-		Method: "GET",
-		Header: make(http.Header),
-	}
-	req.Header = &req.Request.Header
-	req.Request.Header.Set("User-Agent", DefaultUA)
-
-	req.Client = &http.Client{
-		Jar:     cookieJar,
-		Timeout: 30 * time.Second,
-	}
-	return req
 }
 
 // setFile 上传文件处理
@@ -181,6 +129,93 @@ func (mr *MiniRequest) setOption(opt interface{}) {
 		mr.Request.Body = ioutil.NopCloser(reader)
 	case FileData:
 		mr.setFile(t)
+	}
+}
+
+// Requests 设置默认的HTTP客户端
+//	1.默认的UserAgent: MiniRequest
+//	2.自动保存Cookies
+//	3.超时时间30秒
+func Requests() *MiniRequest {
+	req := new(MiniRequest)
+
+	cookieJar, err := cookiejar.New(nil)
+	if err != nil {
+		panic(err)
+	}
+	req.Request = &http.Request{
+		Method: "GET",
+		Header: make(http.Header),
+	}
+	req.Header = &req.Request.Header
+	req.Request.Header.Set("User-Agent", DefaultUA)
+
+	req.Client = &http.Client{
+		Jar:     cookieJar,
+		Timeout: 30 * time.Second,
+	}
+	return req
+}
+
+// NoRedirect 取消自动重定向
+func (mr *MiniRequest) NoRedirect(s bool) {
+	if s {
+		mr.Client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+	} else {
+		mr.Client.CheckRedirect = nil
+	}
+}
+
+// NoCookieJar 关闭cookiejar
+func (mr *MiniRequest) NoCookieJar(s bool) {
+	if s {
+		mr.Client.Jar = nil
+	} else {
+		cookieJar, err := cookiejar.New(nil)
+		if err != nil {
+			panic(err)
+		}
+		mr.Client.Jar = cookieJar
+	}
+}
+
+// TimeOut 设置超时时间 默认30s
+func (mr *MiniRequest) TimeOut(t int) {
+	mr.Client.Timeout = time.Duration(t) * time.Second
+}
+
+// Proxy 设置Socks5代理
+//	eg: 127.0.0.1:1080
+func (mr *MiniRequest) Proxy(proxyURL string) {
+	dialer, err := proxy.SOCKS5("tcp", proxyURL,
+		nil,
+		&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		},
+	)
+	if err != nil {
+		log.Panic(" [S5 Proxy Error]: ", err)
+	}
+
+	mr.Client.Transport = &http.Transport{
+		Proxy:               nil,
+		Dial:                dialer.Dial,
+		TLSHandshakeTimeout: 30 * time.Second,
+	}
+}
+
+// SetCookies 设置 Cookies
+//	建议先关闭 NoCookieJar(true) 关闭cookiejar
+func (mr *MiniRequest) SetCookies(cookies []*http.Cookie) {
+	oldCookies := mr.Request.Cookies()
+	if len(oldCookies) != 0 {
+		delete(mr.Request.Header, "Cookie")
+	}
+	for _, c := range cookies {
+		mr.Request.AddCookie(c)
 	}
 }
 

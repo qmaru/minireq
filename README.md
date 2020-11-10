@@ -11,6 +11,9 @@
 + Form Body
 + Output Raw Data
 + Output JSON Data
++ Manual Cookies
++ Redirect Switch
++ CookieJar Switch
 
 ## Example
 ### 1. GET
@@ -106,6 +109,22 @@ res := request.Get(
     "https://httpbin.org/get",
 )
 fmt.Println(string(res.RawData()))
+```
+
+### 9. Cookies / NoRedirect / NoCookieJar
+```go
+request := minireq.Requests()
+request.NoCookieJar(true)
+data := FormData{
+    "username": "admin",
+    "password": "123456",
+}
+request.NoRedirect(true)
+loginResp := request.Post("http://example.com/login", data)
+cookies := loginResp.RawRes.Cookies()
+req.SetCookies(cookies)
+contentResp := request.Get("http://example.com/home")
+fmt.Println(string(contentResp.RawData()))
 ```
 ## 参考
 [requests](https://github.com/asmcos/requests)
