@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -65,25 +66,29 @@ func (mr *MiniRequest) setFile(files map[string]interface{}) {
 	bodyWriter := multipart.NewWriter(bodyBuf)
 
 	for filed, filelist := range files {
-		for _, file := range filelist.([]string) {
-			_, fname := filepath.Split(file)
-			// 创建表单
-			fileWriter, err := bodyWriter.CreateFormFile(filed, fname)
-			if err != nil {
-				log.Panic("File Buffer Error", err)
+		if reflect.TypeOf(filelist).String() == "map[string]string" {
+			for k, v := range filelist.(map[string]string) {
+				bodyWriter.WriteField(k, v)
 			}
-			// 打开文件
-			f, err := os.Open(fname)
-			if err != nil {
-				log.Panic("Open File Error", err)
+		} else {
+			for _, file := range filelist.([]string) {
+				// 打开文件
+				f, err := os.Open(file)
+				if err != nil {
+					log.Panic("Open File Error", err)
+				}
+				defer f.Close()
+				// 创建表单
+				fileWriter, err := bodyWriter.CreateFormFile(filed, filepath.Base(file))
+				if err != nil {
+					log.Panic("File Buffer Error", err)
+				}
+				// 写入缓存
+				_, err = io.Copy(fileWriter, f)
+				if err != nil {
+					log.Panic("Write Data Error", err)
+				}
 			}
-			defer f.Close()
-			// 写入缓存
-			_, err = io.Copy(fileWriter, f)
-			if err != nil {
-				log.Panic("Write Data Error", err)
-			}
-			bodyWriter.WriteField(filed, fname)
 		}
 	}
 
