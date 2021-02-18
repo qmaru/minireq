@@ -299,3 +299,17 @@ func (res *MiniResponse) RawJSON() interface{} {
 	res.rawJSON = jsonData
 	return res.rawJSON
 }
+
+// RawNumJSON 获取Response的JSON数据(保留整型大数)
+func (res *MiniResponse) RawNumJSON() interface{} {
+	var jsonData interface{}
+	res.RawData()
+	rawData := res.rawData
+
+	dec := json.NewDecoder(strings.NewReader(string(rawData)))
+	dec.UseNumber()
+    dec.Decode(&jsonData)
+
+	res.rawJSON = jsonData
+	return res.rawJSON
+}
