@@ -308,7 +308,7 @@ func (res *MiniResponse) RawNumJSON() interface{} {
 
 	dec := json.NewDecoder(strings.NewReader(string(rawData)))
 	dec.UseNumber()
-    dec.Decode(&jsonData)
+	dec.Decode(&jsonData)
 
 	res.rawJSON = jsonData
 	return res.rawJSON
