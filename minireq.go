@@ -33,7 +33,7 @@ type Headers map[string]string
 type Params map[string]string
 
 // JSONData 设置 JSON Data
-type JSONData map[string]string
+type JSONData map[string]interface{}
 
 // FormData 设置 Form Data
 type FormData map[string]string
