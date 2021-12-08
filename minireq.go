@@ -21,7 +21,7 @@ import (
 )
 
 // DefaultVer 版本号
-const DefaultVer = "1.0"
+const DefaultVer = "1.0.7"
 
 // DefaultUA 默认 User-Agent
 const DefaultUA = "MiniRequest/" + DefaultVer
