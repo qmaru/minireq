@@ -3,6 +3,7 @@
 简单的 HTTP 封装，仅包括 Get / Post
 
 ## Feature
+
 + Set Headers
 + Set Params
 + Set S5 Proxy
@@ -16,7 +17,9 @@
 + CookieJar Switch
 
 ## Example
+
 ### 1. GET
+
 ```go
 request := minireq.Requests()
 res := request.Get(
@@ -24,7 +27,9 @@ res := request.Get(
 )
 fmt.Println(res.RawJSON())
 ```
+
 ### 2. Get With Param
+
 ```go
 request := minireq.Requests()
 headers := minireq.Headers{
@@ -40,7 +45,9 @@ res := request.Get(
 )
 fmt.Println(res.RawJSON())
 ```
+
 ### 3. Get With Auth
+
 ```go
 request := minireq.Requests()
 authData := minireq.Auth{
@@ -53,7 +60,9 @@ res := request.Get(
 )
 fmt.Println(string(res.RawData()))
 ```
+
 ### 4. POST
+
 ```go
 request := minireq.Requests()
 res := request.Post(
@@ -61,7 +70,9 @@ res := request.Post(
 )
 fmt.Println(res.RawJSON())
 ```
+
 ### 5. Post By JSON
+
 ```go
 request := minireq.Requests()
 data := minireq.JSONData{
@@ -74,7 +85,9 @@ res := request.Post(
 )
 fmt.Println(string(res.RawData()))
 ```
+
 ### 6. Post By Form
+
 ```go
 request := minireq.Requests()
 data := minireq.FormData{
@@ -87,7 +100,9 @@ res := request.Post(
 )
 fmt.Println(string(res.RawData()))
 ```
+
 ### 7. Post Files
+
 ```go
 request := minireq.Requests()
 fdata := minireq.FileData{
@@ -101,7 +116,9 @@ request.Post(
     fdata,
 )
 ```
+
 ### 8. Set Proxy
+
 ```go
 request := minireq.Requests()
 request.Proxy("127.0.0.1:1080")
@@ -112,6 +129,7 @@ fmt.Println(string(res.RawData()))
 ```
 
 ### 9. Cookies / NoRedirect / NoCookieJar
+
 ```go
 request := minireq.Requests()
 request.NoCookieJar(true)
@@ -126,5 +144,7 @@ req.SetCookies(cookies)
 contentResp := request.Get("http://example.com/home")
 fmt.Println(string(contentResp.RawData()))
 ```
+
 ## 参考
+
 [requests](https://github.com/asmcos/requests)

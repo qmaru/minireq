@@ -233,6 +233,9 @@ func (mr *MiniRequest) Get(rawURL string, opts ...interface{}) (response *MiniRe
 		log.Panic(err)
 	}
 
+	// 重置 Cookies
+	delete(mr.Request.Header, "Cookie")
+
 	mr.Request.Method = "GET"
 	mr.Request.URL = parseURL
 
@@ -259,6 +262,9 @@ func (mr *MiniRequest) Post(rawURL string, opts ...interface{}) (response *MiniR
 	if err != nil {
 		log.Panic(err)
 	}
+
+	// 重置 Cookies
+	delete(mr.Request.Header, "Cookie")
 
 	mr.Request.Method = "POST"
 	mr.Request.URL = parseURL
