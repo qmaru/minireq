@@ -1,4 +1,4 @@
-module minireq
+module github.com/aobeom/minireq
 
 go 1.17
 
