@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"io/ioutil"
-	"log"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -21,7 +20,7 @@ import (
 )
 
 // DefaultVer 版本号
-const DefaultVer = "1.0.7"
+const DefaultVer = "1.1.0"
 
 // DefaultUA 默认 User-Agent
 const DefaultUA = "MiniRequest/" + DefaultVer
@@ -53,15 +52,13 @@ type MiniRequest struct {
 
 // MiniResponse response
 type MiniResponse struct {
-	RawRes  *http.Response
-	RawReq  *MiniRequest
-	rawData []byte
-	rawJSON interface{}
+	RawRes *http.Response
+	RawReq *MiniRequest
 }
 
 // setFile 上传文件处理
 //	可以一次上传多个文件
-func (mr *MiniRequest) setFile(files map[string]interface{}) {
+func (mr *MiniRequest) setFile(files map[string]interface{}) error {
 	bodyBuf := &bytes.Buffer{}
 	bodyWriter := multipart.NewWriter(bodyBuf)
 
@@ -75,18 +72,18 @@ func (mr *MiniRequest) setFile(files map[string]interface{}) {
 				// 打开文件
 				f, err := os.Open(file)
 				if err != nil {
-					log.Panic("Open File Error", err)
+					return err
 				}
 				defer f.Close()
 				// 创建表单
 				fileWriter, err := bodyWriter.CreateFormFile(filed, filepath.Base(file))
 				if err != nil {
-					log.Panic("File Buffer Error", err)
+					return err
 				}
 				// 写入缓存
 				_, err = io.Copy(fileWriter, f)
 				if err != nil {
-					log.Panic("Write Data Error", err)
+					return err
 				}
 			}
 		}
@@ -94,10 +91,11 @@ func (mr *MiniRequest) setFile(files map[string]interface{}) {
 
 	err := bodyWriter.Close()
 	if err != nil {
-		log.Panic("Buffer Close Error")
+		return err
 	}
 	mr.Request.Header.Set("Content-Type", bodyWriter.FormDataContentType())
 	mr.Request.Body = ioutil.NopCloser(bytes.NewBuffer(bodyBuf.Bytes()))
+	return nil
 }
 
 // setOptions 根据参数类型设置值
@@ -105,7 +103,7 @@ func (mr *MiniRequest) setFile(files map[string]interface{}) {
 //	2.设置 Auth
 //	3.设置 Params
 //	4.设置 Data
-func (mr *MiniRequest) setOption(opt interface{}) {
+func (mr *MiniRequest) setOption(opt interface{}) error {
 	switch t := opt.(type) {
 	case Headers:
 		for k, v := range t {
@@ -120,7 +118,10 @@ func (mr *MiniRequest) setOption(opt interface{}) {
 		}
 		mr.Request.URL.RawQuery = q.Encode()
 	case JSONData:
-		bytesData, _ := json.Marshal(t)
+		bytesData, err := json.Marshal(t)
+		if err != nil {
+			return err
+		}
 		reader := bytes.NewReader(bytesData)
 		mr.Request.Header.Set("Content-Type", "application/json")
 		mr.Request.Body = ioutil.NopCloser(reader)
@@ -133,20 +134,24 @@ func (mr *MiniRequest) setOption(opt interface{}) {
 		mr.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		mr.Request.Body = ioutil.NopCloser(reader)
 	case FileData:
-		mr.setFile(t)
+		err := mr.setFile(t)
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // Requests 设置默认的HTTP客户端
 //	1.默认的UserAgent: MiniRequest
 //	2.自动保存Cookies
 //	3.超时时间30秒
-func Requests() *MiniRequest {
+func Requests() (*MiniRequest, error) {
 	req := new(MiniRequest)
 
 	cookieJar, err := cookiejar.New(nil)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	req.Request = &http.Request{
 		Method: "GET",
@@ -159,7 +164,7 @@ func Requests() *MiniRequest {
 		Jar:     cookieJar,
 		Timeout: 30 * time.Second,
 	}
-	return req
+	return req, nil
 }
 
 // NoRedirect 取消自动重定向
@@ -174,16 +179,17 @@ func (mr *MiniRequest) NoRedirect(s bool) {
 }
 
 // NoCookieJar 关闭cookiejar
-func (mr *MiniRequest) NoCookieJar(s bool) {
+func (mr *MiniRequest) NoCookieJar(s bool) error {
 	if s {
 		mr.Client.Jar = nil
 	} else {
 		cookieJar, err := cookiejar.New(nil)
 		if err != nil {
-			panic(err)
+			return err
 		}
 		mr.Client.Jar = cookieJar
 	}
+	return nil
 }
 
 // TimeOut 设置超时时间 默认30s
@@ -193,7 +199,7 @@ func (mr *MiniRequest) TimeOut(t int) {
 
 // Proxy 设置Socks5代理
 //	eg: 127.0.0.1:1080
-func (mr *MiniRequest) Proxy(proxyURL string) {
+func (mr *MiniRequest) Proxy(proxyURL string) error {
 	dialer, err := proxy.SOCKS5("tcp", proxyURL,
 		nil,
 		&net.Dialer{
@@ -202,7 +208,7 @@ func (mr *MiniRequest) Proxy(proxyURL string) {
 		},
 	)
 	if err != nil {
-		log.Panic(" [S5 Proxy Error]: ", err)
+		return err
 	}
 
 	mr.Client.Transport = &http.Transport{
@@ -210,6 +216,7 @@ func (mr *MiniRequest) Proxy(proxyURL string) {
 		Dial:                dialer.Dial,
 		TLSHandshakeTimeout: 30 * time.Second,
 	}
+	return nil
 }
 
 // SetCookies 设置 Cookies
@@ -227,10 +234,10 @@ func (mr *MiniRequest) SetCookies(cookies []*http.Cookie) {
 // Get GET请求
 //	1.获取原始的 Response
 //	2.获取原始的 Request
-func (mr *MiniRequest) Get(rawURL string, opts ...interface{}) (response *MiniResponse) {
+func (mr *MiniRequest) Get(rawURL string, opts ...interface{}) (response *MiniResponse, err error) {
 	parseURL, err := url.Parse(rawURL)
 	if err != nil {
-		log.Panic(err)
+		return nil, err
 	}
 
 	// 重置 Cookies
@@ -245,22 +252,22 @@ func (mr *MiniRequest) Get(rawURL string, opts ...interface{}) (response *MiniRe
 
 	rawRes, err := mr.Client.Do(mr.Request)
 	if err != nil {
-		log.Panic(" [Get - Response Error]: ", err)
+		return nil, err
 	}
 
 	response = &MiniResponse{}
 	response.RawRes = rawRes
 	response.RawReq = mr
-	return response
+	return response, nil
 }
 
 // Post POST请求
 //	1.获取原始的 Response
 //	2.获取原始的 Request
-func (mr *MiniRequest) Post(rawURL string, opts ...interface{}) (response *MiniResponse) {
+func (mr *MiniRequest) Post(rawURL string, opts ...interface{}) (response *MiniResponse, err error) {
 	parseURL, err := url.Parse(rawURL)
 	if err != nil {
-		log.Panic(err)
+		return nil, err
 	}
 
 	// 重置 Cookies
@@ -275,47 +282,48 @@ func (mr *MiniRequest) Post(rawURL string, opts ...interface{}) (response *MiniR
 
 	rawRes, err := mr.Client.Do(mr.Request)
 	if err != nil {
-		log.Panic(" [Post - Response Error]: ", err)
+		return nil, err
 	}
 	response = &MiniResponse{}
 	response.RawRes = rawRes
 	response.RawReq = mr
-	return response
+	return response, nil
 }
 
 // RawData 获取Response的Body
-func (res *MiniResponse) RawData() []byte {
+func (res *MiniResponse) RawData() ([]byte, error) {
 	defer res.RawRes.Body.Close()
 
-	var err error
 	body := res.RawRes.Body
-	res.rawData, err = ioutil.ReadAll(body)
+	bodyData, err := ioutil.ReadAll(body)
 	if err != nil {
-		log.Panic(" [Content - Body Error]: ", err)
+		return nil, err
 	}
-	return res.rawData
+	return bodyData, nil
 }
 
 // RawJSON 获取Response的JSON数据
-func (res *MiniResponse) RawJSON() interface{} {
+func (res *MiniResponse) RawJSON() (interface{}, error) {
 	var jsonData interface{}
-	res.RawData()
-	rawData := res.rawData
+	rawData, err := res.RawData()
+	if err != nil {
+		return nil, err
+	}
 	json.Unmarshal(rawData, &jsonData)
-	res.rawJSON = jsonData
-	return res.rawJSON
+	return jsonData, nil
 }
 
 // RawNumJSON 获取Response的JSON数据(保留整型大数)
-func (res *MiniResponse) RawNumJSON() interface{} {
+func (res *MiniResponse) RawNumJSON() (interface{}, error) {
 	var jsonData interface{}
-	res.RawData()
-	rawData := res.rawData
+
+	rawData, err := res.RawData()
+	if err != nil {
+		return nil, err
+	}
 
 	dec := json.NewDecoder(strings.NewReader(string(rawData)))
 	dec.UseNumber()
 	dec.Decode(&jsonData)
-
-	res.rawJSON = jsonData
-	return res.rawJSON
+	return jsonData, nil
 }
