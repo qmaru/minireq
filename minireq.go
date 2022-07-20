@@ -20,15 +20,15 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-type httpClient struct {
+type HttpClient struct {
 	Method        string // Request Method
 	NoRedirect    bool   // Turn off automatic redirection
 	Socks5Address string // Set socks5 proxy
 	Timeout       int    // Request timeout
 }
 
-func NewClient() *httpClient {
-	client := new(httpClient)
+func NewClient() *HttpClient {
+	client := new(HttpClient)
 	client.Timeout = 30
 	return client
 }
@@ -142,7 +142,7 @@ func reqOptions(request *http.Request, opts interface{}) (*http.Request, error) 
 }
 
 // Request Universal client
-func (h *httpClient) Request(url string, opts ...interface{}) (*miniResponse, error) {
+func (h *HttpClient) Request(url string, opts ...interface{}) (*miniResponse, error) {
 	var err error
 	// Make URL
 	parseURL, err := URL.Parse(url)
@@ -197,27 +197,27 @@ func (h *httpClient) Request(url string, opts ...interface{}) (*miniResponse, er
 	return miniRes, nil
 }
 
-func (h *httpClient) Get(url string, opts ...interface{}) (*miniResponse, error) {
+func (h *HttpClient) Get(url string, opts ...interface{}) (*miniResponse, error) {
 	h.Method = "GET"
 	return h.Request(url, opts...)
 }
 
-func (h *httpClient) Post(url string, opts ...interface{}) (*miniResponse, error) {
+func (h *HttpClient) Post(url string, opts ...interface{}) (*miniResponse, error) {
 	h.Method = "POST"
 	return h.Request(url, opts...)
 }
 
-func (h *httpClient) Put(url string, opts ...interface{}) (*miniResponse, error) {
+func (h *HttpClient) Put(url string, opts ...interface{}) (*miniResponse, error) {
 	h.Method = "PUT"
 	return h.Request(url, opts...)
 }
 
-func (h *httpClient) Patch(url string, opts ...interface{}) (*miniResponse, error) {
+func (h *HttpClient) Patch(url string, opts ...interface{}) (*miniResponse, error) {
 	h.Method = "PATCH"
 	return h.Request(url, opts...)
 }
 
-func (h *httpClient) Delete(url string, opts ...interface{}) (*miniResponse, error) {
+func (h *HttpClient) Delete(url string, opts ...interface{}) (*miniResponse, error) {
 	h.Method = "DELETE"
 	return h.Request(url, opts...)
 }
