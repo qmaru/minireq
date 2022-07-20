@@ -193,6 +193,7 @@ func (h *HttpClient) Request(url string, opts ...interface{}) (*miniResponse, er
 		return nil, err
 	}
 	miniRes := new(miniResponse)
+	miniRes.Request = request
 	miniRes.Response = response
 	return miniRes, nil
 }
