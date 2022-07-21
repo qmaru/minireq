@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"io/ioutil"
 	"mime/multipart"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	URL "net/url"
 	"os"
 	"path/filepath"
@@ -109,16 +109,30 @@ func reqOptions(request *http.Request, opts interface{}) (*http.Request, error) 
 		}
 
 		reader := bytes.NewBuffer(bodyBuf.Bytes())
+		buf := reader.Bytes()
+
+		request.ContentLength = int64(reader.Len())
 		request.Header.Set("Content-Type", bodyWriter.FormDataContentType())
-		request.Body = ioutil.NopCloser(reader)
+		request.Body = io.NopCloser(reader)
+		request.GetBody = func() (io.ReadCloser, error) {
+			r := bytes.NewReader(buf)
+			return io.NopCloser(r), nil
+		}
 	case FormKV:
-		query := request.URL.Query()
+		query := make(url.Values)
 		for k, v := range t {
 			query.Add(k, v)
 		}
 		reader := strings.NewReader(query.Encode())
+		snapshot := *reader
+
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		request.Body = ioutil.NopCloser(reader)
+		request.ContentLength = int64(reader.Len())
+		request.Body = io.NopCloser(reader)
+		request.GetBody = func() (io.ReadCloser, error) {
+			r := snapshot
+			return io.NopCloser(&r), nil
+		}
 	case Headers:
 		for k, v := range t {
 			request.Header.Set(k, v)
@@ -129,10 +143,17 @@ func reqOptions(request *http.Request, opts interface{}) (*http.Request, error) 
 			return nil, err
 		}
 		reader := bytes.NewReader(jsonByte)
+		snapshot := *reader
+
 		request.Header.Set("Content-Type", "application/json")
-		request.Body = ioutil.NopCloser(reader)
+		request.ContentLength = int64(reader.Len())
+		request.Body = io.NopCloser(reader)
+		request.GetBody = func() (io.ReadCloser, error) {
+			r := snapshot
+			return io.NopCloser(&r), nil
+		}
 	case Params:
-		query := request.URL.Query()
+		query := url.Values{}
 		for k, v := range t {
 			query.Add(k, v)
 		}
