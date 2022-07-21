@@ -153,7 +153,7 @@ func reqOptions(request *http.Request, opts interface{}) (*http.Request, error) 
 			return io.NopCloser(&r), nil
 		}
 	case Params:
-		query := url.Values{}
+		query := make(url.Values)
 		for k, v := range t {
 			query.Add(k, v)
 		}
