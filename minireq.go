@@ -42,8 +42,8 @@ func setProxy(address string) (*http.Transport, error) {
 
 	dialer, err := proxy.SOCKS5("tcp", address, nil,
 		&net.Dialer{
-			Timeout:   time.Duration(30 * time.Second),
-			KeepAlive: time.Duration(30 * time.Second),
+			Timeout:   time.Duration(30) * time.Second,
+			KeepAlive: time.Duration(30) * time.Second,
 		},
 	)
 	if err != nil {
@@ -53,7 +53,7 @@ func setProxy(address string) (*http.Transport, error) {
 	transport := &http.Transport{
 		Proxy:               nil,
 		Dial:                dialer.Dial,
-		TLSHandshakeTimeout: time.Duration(30 * time.Second),
+		TLSHandshakeTimeout: time.Duration(30) * time.Second,
 	}
 	return transport, nil
 }
@@ -190,7 +190,7 @@ func (h *HttpClient) Request(url string, opts ...interface{}) (*miniResponse, er
 	}
 	client := &http.Client{
 		Jar:     cookieJar,
-		Timeout: time.Duration(h.Timeout * int(time.Second)),
+		Timeout: time.Duration(h.Timeout) * time.Second,
 	}
 	// allow Redirect
 	if h.NoRedirect {
