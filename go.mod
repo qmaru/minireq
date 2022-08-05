@@ -1,5 +1,5 @@
-module github.com/aobeom/minireq
+module github.com/qmaru/minireq
 
-go 1.17
+go 1.18
 
 require golang.org/x/net v0.0.0-20211208012354-db4efeb81f4b
