@@ -1,4 +1,4 @@
-module github.com/aobeom/minireq/v2
+module github.com/qmaru/minireq/v2
 
 go 1.18
 
