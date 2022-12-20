@@ -2,7 +2,7 @@ package minireq
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -17,7 +17,7 @@ func (res *miniResponse) RawData() ([]byte, error) {
 	body := res.Response.Body
 	defer body.Close()
 
-	bodyData, err := ioutil.ReadAll(body)
+	bodyData, err := io.ReadAll(body)
 	if err != nil {
 		return nil, err
 	}

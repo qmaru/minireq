@@ -2,6 +2,8 @@ package minireq
 
 import (
 	"bytes"
+	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
-	"net/url"
 	URL "net/url"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ type HttpClient struct {
 	Method        string // Request Method
 	NoRedirect    bool   // Turn off automatic redirection
 	Socks5Address string // Set socks5 proxy
+	SkipVerify    bool   // Skip verify
 	Timeout       int    // Request timeout
 }
 
@@ -34,7 +36,7 @@ func NewClient() *HttpClient {
 }
 
 // setProxy Set socks5 proxy
-func setProxy(address string) (*http.Transport, error) {
+func setProxy(address string) (proxy.Dialer, error) {
 	addRule := regexp.MustCompile(`^((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})(\.((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})){3}:\d{1,5}$`)
 	if !addRule.MatchString(address) {
 		return nil, errors.New("address is error")
@@ -49,13 +51,7 @@ func setProxy(address string) (*http.Transport, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	transport := &http.Transport{
-		Proxy:               nil,
-		Dial:                dialer.Dial,
-		TLSHandshakeTimeout: time.Duration(30) * time.Second,
-	}
-	return transport, nil
+	return dialer, nil
 }
 
 // reqOptions construct a body
@@ -119,7 +115,7 @@ func reqOptions(request *http.Request, opts interface{}) (*http.Request, error) 
 			return io.NopCloser(r), nil
 		}
 	case FormKV:
-		query := make(url.Values)
+		query := make(URL.Values)
 		for k, v := range t {
 			query.Add(k, v)
 		}
@@ -153,7 +149,7 @@ func reqOptions(request *http.Request, opts interface{}) (*http.Request, error) 
 			return io.NopCloser(&r), nil
 		}
 	case Params:
-		query := make(url.Values)
+		query := make(URL.Values)
 		for k, v := range t {
 			query.Add(k, v)
 		}
@@ -192,6 +188,7 @@ func (h *HttpClient) Request(url string, opts ...interface{}) (*miniResponse, er
 		Jar:     cookieJar,
 		Timeout: time.Duration(h.Timeout) * time.Second,
 	}
+	clientTransport := new(http.Transport)
 	// allow Redirect
 	if h.NoRedirect {
 		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
@@ -202,12 +199,21 @@ func (h *HttpClient) Request(url string, opts ...interface{}) (*miniResponse, er
 	}
 	// allow proxy
 	if h.Socks5Address != "" {
-		transport, err := setProxy(h.Socks5Address)
+		dialer, err := setProxy(h.Socks5Address)
 		if err != nil {
 			return nil, err
 		}
-		client.Transport = transport
+		dialContext := func(ctx context.Context, network, address string) (net.Conn, error) {
+			return dialer.Dial(network, address)
+		}
+		clientTransport.Proxy = nil
+		clientTransport.DialContext = dialContext
+		clientTransport.TLSHandshakeTimeout = time.Duration(30) * time.Second
 	}
+	if h.SkipVerify {
+		clientTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	client.Transport = clientTransport
 	// Send Data
 	response, err := client.Do(request)
 	if err != nil {
