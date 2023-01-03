@@ -159,7 +159,7 @@ func reqOptions(request *http.Request, opts interface{}) (*http.Request, error) 
 }
 
 // Request Universal client
-func (h *HttpClient) Request(url string, opts ...interface{}) (*miniResponse, error) {
+func (h *HttpClient) Request(url string, opts ...interface{}) (*MiniResponse, error) {
 	var err error
 	// Make URL
 	parseURL, err := URL.Parse(url)
@@ -219,33 +219,33 @@ func (h *HttpClient) Request(url string, opts ...interface{}) (*miniResponse, er
 	if err != nil {
 		return nil, err
 	}
-	miniRes := new(miniResponse)
+	miniRes := new(MiniResponse)
 	miniRes.Request = request
 	miniRes.Response = response
 	return miniRes, nil
 }
 
-func (h *HttpClient) Get(url string, opts ...interface{}) (*miniResponse, error) {
+func (h *HttpClient) Get(url string, opts ...interface{}) (*MiniResponse, error) {
 	h.Method = "GET"
 	return h.Request(url, opts...)
 }
 
-func (h *HttpClient) Post(url string, opts ...interface{}) (*miniResponse, error) {
+func (h *HttpClient) Post(url string, opts ...interface{}) (*MiniResponse, error) {
 	h.Method = "POST"
 	return h.Request(url, opts...)
 }
 
-func (h *HttpClient) Put(url string, opts ...interface{}) (*miniResponse, error) {
+func (h *HttpClient) Put(url string, opts ...interface{}) (*MiniResponse, error) {
 	h.Method = "PUT"
 	return h.Request(url, opts...)
 }
 
-func (h *HttpClient) Patch(url string, opts ...interface{}) (*miniResponse, error) {
+func (h *HttpClient) Patch(url string, opts ...interface{}) (*MiniResponse, error) {
 	h.Method = "PATCH"
 	return h.Request(url, opts...)
 }
 
-func (h *HttpClient) Delete(url string, opts ...interface{}) (*miniResponse, error) {
+func (h *HttpClient) Delete(url string, opts ...interface{}) (*MiniResponse, error) {
 	h.Method = "DELETE"
 	return h.Request(url, opts...)
 }
