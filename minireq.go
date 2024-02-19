@@ -249,3 +249,23 @@ func (h *HttpClient) Delete(url string, opts ...interface{}) (*MiniResponse, err
 	h.Method = "DELETE"
 	return h.Request(url, opts...)
 }
+
+func (h *HttpClient) Connect(url string, opts ...interface{}) (*MiniResponse, error) {
+	h.Method = "CONNECT"
+	return h.Request(url, opts...)
+}
+
+func (h *HttpClient) Head(url string, opts ...interface{}) (*MiniResponse, error) {
+	h.Method = "HEAD"
+	return h.Request(url, opts...)
+}
+
+func (h *HttpClient) Options(url string, opts ...interface{}) (*MiniResponse, error) {
+	h.Method = "OPTIONS"
+	return h.Request(url, opts...)
+}
+
+func (h *HttpClient) Trace(url string, opts ...interface{}) (*MiniResponse, error) {
+	h.Method = "TRACE"
+	return h.Request(url, opts...)
+}
