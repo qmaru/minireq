@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const HTTPBIN string = "https://postman-echo.com"
+const HTTPBIN string = "https://httpbin.org/"
 
 func TestGet(t *testing.T) {
 	client := NewClient()
@@ -32,7 +32,7 @@ func TestGet(t *testing.T) {
 
 func TestProxy(t *testing.T) {
 	client := NewClient()
-	client.Socks5Address = "127.0.0.1:1080"
+	client.SetProxy("127.0.0.1:1080")
 	res, err := client.Get(HTTPBIN + "/ip")
 	if err != nil {
 		t.Error(err)
@@ -42,7 +42,7 @@ func TestProxy(t *testing.T) {
 			t.Error(err)
 		} else {
 			jsonData := rawData.(map[string]interface{})
-			ip := jsonData["ip"]
+			ip := jsonData["origin"]
 			t.Log(ip)
 		}
 	}
@@ -51,7 +51,7 @@ func TestProxy(t *testing.T) {
 func TestAuth(t *testing.T) {
 	client := NewClient()
 	auth := Auth{"postman", "password"}
-	res, err := client.Get(HTTPBIN+"/basic-auth", auth)
+	res, err := client.Get(HTTPBIN+"/basic-auth/postman/password", auth)
 	if err != nil {
 		t.Error(err)
 	} else {
@@ -83,7 +83,7 @@ func TestPostURL(t *testing.T) {
 			jsonData := rawData.(map[string]interface{})
 			form := jsonData["form"].(map[string]interface{})
 			headers := jsonData["headers"].(map[string]interface{})
-			contentType := headers["content-type"].(string)
+			contentType := headers["Content-Type"].(string)
 			if _, ok := form["foo"]; ok && contentType == "application/x-www-form-urlencoded" {
 				t.Log("succeed")
 			} else {
@@ -111,10 +111,10 @@ func TestPostData(t *testing.T) {
 			form := jsonData["form"].(map[string]interface{})
 			files := jsonData["files"].(map[string]interface{})
 			headers := jsonData["headers"].(map[string]interface{})
-			contentType := headers["content-type"].(string)
+			contentType := headers["Content-Type"].(string)
 
 			_, ok1 := form["foo"]
-			_, ok2 := files["go.mod"]
+			_, ok2 := files["file1"]
 			ok3 := strings.Contains(contentType, "multipart/form-data")
 			if ok1 && ok2 && ok3 {
 				t.Log("succeed")
@@ -139,12 +139,45 @@ func TestPostJSON(t *testing.T) {
 			jsonData := rawData.(map[string]interface{})
 			json := jsonData["json"].(map[string]interface{})
 			headers := jsonData["headers"].(map[string]interface{})
-			contentType := headers["content-type"].(string)
+			contentType := headers["Content-Type"].(string)
 			if _, ok := json["foo"]; ok && contentType == "application/json" {
 				t.Log("succeed")
 			} else {
 				t.Error("failed")
 			}
 		}
+	}
+}
+
+func TestAnySet(t *testing.T) {
+	client := NewClient()
+	client.SetTimeout(5)
+	t.Log("set timeout 5s")
+	res, err := client.Get(HTTPBIN + "/delay/3")
+	if err != nil {
+		t.Fatal(err)
+	} else {
+		statusCode := res.Response.StatusCode
+		t.Log(statusCode)
+	}
+
+	t.Log("set insecure")
+	client.SetInsecure(false)
+	res, err = client.Get(HTTPBIN + "/get")
+	if err != nil {
+		t.Error(err)
+	} else {
+		statusCode := res.Response.StatusCode
+		t.Log(statusCode)
+	}
+
+	t.Log("set redirect")
+	client.SetAutoRedirect(false)
+	res, err = client.Get(HTTPBIN + "/redirect/3")
+	if err != nil {
+		t.Error(err)
+	} else {
+		statusCode := res.Response.StatusCode
+		t.Log(statusCode)
 	}
 }

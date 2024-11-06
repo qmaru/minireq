@@ -23,15 +23,15 @@ import (
 
 type HttpClient struct {
 	Method        string // Request Method
-	NoRedirect    bool   // Turn off automatic redirection
-	Socks5Address string // Set socks5 proxy
-	SkipVerify    bool   // Skip verify
-	Timeout       int    // Request timeout
+	AutoRedirect  bool   // automatic redirection
+	Socks5Address string // socks5 proxy addr
+	Insecure      bool   // allow insecure request
+	Timeout       int    // request timeout
 }
 
 func NewClient() *HttpClient {
 	client := new(HttpClient)
-	client.Timeout = 30
+
 	return client
 }
 
@@ -158,6 +158,26 @@ func reqOptions(request *http.Request, opts interface{}) (*http.Request, error) 
 	return request, nil
 }
 
+// SetTimeout Set timeout
+func (h *HttpClient) SetTimeout(t int) {
+	h.Timeout = t
+}
+
+// SetProxy Set socks5 proxy
+func (h *HttpClient) SetProxy(addr string) {
+	h.Socks5Address = addr
+}
+
+// SetInsecure Allow Insecure
+func (h *HttpClient) SetInsecure(t bool) {
+	h.Insecure = t
+}
+
+// SetAutoRedirect Set Redirect
+func (h *HttpClient) SetAutoRedirect(t bool) {
+	h.AutoRedirect = t
+}
+
 // Request Universal client
 func (h *HttpClient) Request(url string, opts ...interface{}) (*MiniResponse, error) {
 	var err error
@@ -184,18 +204,23 @@ func (h *HttpClient) Request(url string, opts ...interface{}) (*MiniResponse, er
 	if err != nil {
 		return nil, err
 	}
+
+	if h.Timeout == 0 {
+		h.Timeout = 30
+	}
+
 	client := &http.Client{
 		Jar:     cookieJar,
 		Timeout: time.Duration(h.Timeout) * time.Second,
 	}
 	clientTransport := new(http.Transport)
 	// allow Redirect
-	if h.NoRedirect {
+	if h.AutoRedirect {
+		client.CheckRedirect = nil
+	} else {
 		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
-	} else {
-		client.CheckRedirect = nil
 	}
 	// allow proxy
 	if h.Socks5Address != "" {
@@ -210,7 +235,7 @@ func (h *HttpClient) Request(url string, opts ...interface{}) (*MiniResponse, er
 		clientTransport.DialContext = dialContext
 		clientTransport.TLSHandshakeTimeout = time.Duration(30) * time.Second
 	}
-	if h.SkipVerify {
+	if h.Insecure {
 		clientTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 	client.Transport = clientTransport
