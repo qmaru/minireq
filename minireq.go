@@ -31,7 +31,6 @@ type HttpClient struct {
 
 func NewClient() *HttpClient {
 	client := new(HttpClient)
-
 	return client
 }
 
@@ -192,13 +191,18 @@ func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 		Method: h.Method,
 		Header: make(http.Header),
 	}
-	request.Header.Set("User-Agent", DefaultUA)
+
 	for _, opt := range opts {
 		request, err = reqOptions(request, opt)
 		if err != nil {
 			return nil, err
 		}
 	}
+
+	if request.Header.Get("user-agent") == "" {
+		request.Header.Set("User-Agent", DefaultUA)
+	}
+
 	// Make Client
 	cookieJar, err := cookiejar.New(nil)
 	if err != nil {
