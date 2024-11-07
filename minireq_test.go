@@ -19,8 +19,8 @@ func TestGet(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		} else {
-			jsonData := rawData.(map[string]interface{})
-			args := jsonData["args"].(map[string]interface{})
+			jsonData := rawData.(map[string]any)
+			args := jsonData["args"].(map[string]any)
 			if _, ok := args["foo"]; ok {
 				t.Log("succeed")
 			} else {
@@ -41,7 +41,7 @@ func TestProxy(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		} else {
-			jsonData := rawData.(map[string]interface{})
+			jsonData := rawData.(map[string]any)
 			ip := jsonData["origin"]
 			t.Log(ip)
 		}
@@ -59,7 +59,7 @@ func TestAuth(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		} else {
-			jsonData := rawData.(map[string]interface{})
+			jsonData := rawData.(map[string]any)
 			if _, ok := jsonData["authenticated"]; ok {
 				t.Log("succeed")
 			} else {
@@ -80,9 +80,9 @@ func TestPostURL(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		} else {
-			jsonData := rawData.(map[string]interface{})
-			form := jsonData["form"].(map[string]interface{})
-			headers := jsonData["headers"].(map[string]interface{})
+			jsonData := rawData.(map[string]any)
+			form := jsonData["form"].(map[string]any)
+			headers := jsonData["headers"].(map[string]any)
 			contentType := headers["Content-Type"].(string)
 			if _, ok := form["foo"]; ok && contentType == "application/x-www-form-urlencoded" {
 				t.Log("succeed")
@@ -107,10 +107,10 @@ func TestPostData(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		} else {
-			jsonData := rawData.(map[string]interface{})
-			form := jsonData["form"].(map[string]interface{})
-			files := jsonData["files"].(map[string]interface{})
-			headers := jsonData["headers"].(map[string]interface{})
+			jsonData := rawData.(map[string]any)
+			form := jsonData["form"].(map[string]any)
+			files := jsonData["files"].(map[string]any)
+			headers := jsonData["headers"].(map[string]any)
 			contentType := headers["Content-Type"].(string)
 
 			_, ok1 := form["foo"]
@@ -136,9 +136,9 @@ func TestPostJSON(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		} else {
-			jsonData := rawData.(map[string]interface{})
-			json := jsonData["json"].(map[string]interface{})
-			headers := jsonData["headers"].(map[string]interface{})
+			jsonData := rawData.(map[string]any)
+			json := jsonData["json"].(map[string]any)
+			headers := jsonData["headers"].(map[string]any)
 			contentType := headers["Content-Type"].(string)
 			if _, ok := json["foo"]; ok && contentType == "application/json" {
 				t.Log("succeed")
@@ -172,7 +172,7 @@ func TestAnySet(t *testing.T) {
 	}
 
 	t.Log("set redirect")
-	client.SetAutoRedirect(false)
+	client.SetAutoRedirectDisable(true)
 	res, err = client.Get(HTTPBIN + "/redirect/3")
 	if err != nil {
 		t.Error(err)

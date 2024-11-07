@@ -22,11 +22,11 @@ import (
 )
 
 type HttpClient struct {
-	Method        string // Request Method
-	AutoRedirect  bool   // automatic redirection
-	Socks5Address string // socks5 proxy addr
-	Insecure      bool   // allow insecure request
-	Timeout       int    // request timeout
+	Method              string // Request Method
+	AutoRedirectDisable bool   // automatic redirection
+	Socks5Address       string // socks5 proxy addr
+	Insecure            bool   // allow insecure request
+	Timeout             int    // request timeout
 }
 
 func NewClient() *HttpClient {
@@ -55,7 +55,7 @@ func setProxy(address string) (proxy.Dialer, error) {
 }
 
 // reqOptions construct a body
-func reqOptions(request *http.Request, opts interface{}) (*http.Request, error) {
+func reqOptions(request *http.Request, opts any) (*http.Request, error) {
 	switch t := opts.(type) {
 	case Auth:
 		request.SetBasicAuth(t[0], t[1])
@@ -173,13 +173,13 @@ func (h *HttpClient) SetInsecure(t bool) {
 	h.Insecure = t
 }
 
-// SetAutoRedirect Set Redirect
-func (h *HttpClient) SetAutoRedirect(t bool) {
-	h.AutoRedirect = t
+// SetAutoRedirectDisable Disable Redirect
+func (h *HttpClient) SetAutoRedirectDisable(t bool) {
+	h.AutoRedirectDisable = t
 }
 
 // Request Universal client
-func (h *HttpClient) Request(url string, opts ...interface{}) (*MiniResponse, error) {
+func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 	var err error
 	// Make URL
 	parseURL, err := URL.Parse(url)
@@ -214,13 +214,13 @@ func (h *HttpClient) Request(url string, opts ...interface{}) (*MiniResponse, er
 		Timeout: time.Duration(h.Timeout) * time.Second,
 	}
 	clientTransport := new(http.Transport)
-	// allow Redirect
-	if h.AutoRedirect {
-		client.CheckRedirect = nil
-	} else {
+	// disable redirect
+	if h.AutoRedirectDisable {
 		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
+	} else {
+		client.CheckRedirect = nil
 	}
 	// allow proxy
 	if h.Socks5Address != "" {
@@ -250,47 +250,47 @@ func (h *HttpClient) Request(url string, opts ...interface{}) (*MiniResponse, er
 	return miniRes, nil
 }
 
-func (h *HttpClient) Get(url string, opts ...interface{}) (*MiniResponse, error) {
+func (h *HttpClient) Get(url string, opts ...any) (*MiniResponse, error) {
 	h.Method = "GET"
 	return h.Request(url, opts...)
 }
 
-func (h *HttpClient) Post(url string, opts ...interface{}) (*MiniResponse, error) {
+func (h *HttpClient) Post(url string, opts ...any) (*MiniResponse, error) {
 	h.Method = "POST"
 	return h.Request(url, opts...)
 }
 
-func (h *HttpClient) Put(url string, opts ...interface{}) (*MiniResponse, error) {
+func (h *HttpClient) Put(url string, opts ...any) (*MiniResponse, error) {
 	h.Method = "PUT"
 	return h.Request(url, opts...)
 }
 
-func (h *HttpClient) Patch(url string, opts ...interface{}) (*MiniResponse, error) {
+func (h *HttpClient) Patch(url string, opts ...any) (*MiniResponse, error) {
 	h.Method = "PATCH"
 	return h.Request(url, opts...)
 }
 
-func (h *HttpClient) Delete(url string, opts ...interface{}) (*MiniResponse, error) {
+func (h *HttpClient) Delete(url string, opts ...any) (*MiniResponse, error) {
 	h.Method = "DELETE"
 	return h.Request(url, opts...)
 }
 
-func (h *HttpClient) Connect(url string, opts ...interface{}) (*MiniResponse, error) {
+func (h *HttpClient) Connect(url string, opts ...any) (*MiniResponse, error) {
 	h.Method = "CONNECT"
 	return h.Request(url, opts...)
 }
 
-func (h *HttpClient) Head(url string, opts ...interface{}) (*MiniResponse, error) {
+func (h *HttpClient) Head(url string, opts ...any) (*MiniResponse, error) {
 	h.Method = "HEAD"
 	return h.Request(url, opts...)
 }
 
-func (h *HttpClient) Options(url string, opts ...interface{}) (*MiniResponse, error) {
+func (h *HttpClient) Options(url string, opts ...any) (*MiniResponse, error) {
 	h.Method = "OPTIONS"
 	return h.Request(url, opts...)
 }
 
-func (h *HttpClient) Trace(url string, opts ...interface{}) (*MiniResponse, error) {
+func (h *HttpClient) Trace(url string, opts ...any) (*MiniResponse, error) {
 	h.Method = "TRACE"
 	return h.Request(url, opts...)
 }

@@ -27,7 +27,7 @@ type FormKV map[string]string
 type Headers map[string]string
 
 // JSONData Use application/json
-type JSONData map[string]interface{}
+type JSONData map[string]any
 
 // Params Set Params
 type Params map[string]string

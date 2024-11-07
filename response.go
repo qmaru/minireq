@@ -25,8 +25,8 @@ func (res *MiniResponse) RawData() ([]byte, error) {
 }
 
 // RawJSON JSON data
-func (res *MiniResponse) RawJSON() (interface{}, error) {
-	var jsonData interface{}
+func (res *MiniResponse) RawJSON() (any, error) {
+	var jsonData any
 	rawData, err := res.RawData()
 	if err != nil {
 		return nil, err
@@ -39,8 +39,8 @@ func (res *MiniResponse) RawJSON() (interface{}, error) {
 }
 
 // RawNumJSON JSON data with real number
-func (res *MiniResponse) RawNumJSON() (interface{}, error) {
-	var jsonData interface{}
+func (res *MiniResponse) RawNumJSON() (any, error) {
+	var jsonData any
 
 	rawData, err := res.RawData()
 	if err != nil {
