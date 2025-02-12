@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const HTTPBIN string = "https://httpbin.org/"
+const HTTPBIN string = "https://httpbin.org"
 
 func TestGet(t *testing.T) {
 	client := NewClient()
@@ -163,7 +163,7 @@ func TestAnySet(t *testing.T) {
 
 	t.Log("set insecure")
 	client.SetInsecure(false)
-	res, err = client.Get(HTTPBIN + "/get")
+	res, err = client.Get("https://expired.badssl.com/")
 	if err != nil {
 		t.Error(err)
 	} else {

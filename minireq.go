@@ -16,22 +16,65 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/proxy"
 )
 
-type HttpClient struct {
-	Method              string // Request Method
-	AutoRedirectDisable bool   // automatic redirection
-	Socks5Address       string // socks5 proxy addr
+type TransportConfig struct {
 	Insecure            bool   // allow insecure request
-	Timeout             int    // request timeout
+	Socks5Address       string // socks5 proxy addr
+	TLSHandshakeTimeout int    // tls handshake timeout
+}
+
+type HttpClient struct {
+	Method              string          // Request Method
+	Timeout             int             // request timeout
+	AutoRedirectDisable bool            // automatic redirection
+	Insecure            bool            // allow insecure request
+	Socks5Address       string          // socks5 proxy addr
+	TLSHandshakeTimeout int             // tls handshake timeout
+	TransportConfig     TransportConfig // transport
+	transport           *http.Transport
+}
+
+var transportPool = sync.Pool{
+	New: func() any {
+		return &http.Transport{}
+	},
 }
 
 func NewClient() *HttpClient {
-	client := new(HttpClient)
-	return client
+	return &HttpClient{
+		Timeout:             30,
+		AutoRedirectDisable: false,
+		Insecure:            false,
+		Socks5Address:       "",
+		TLSHandshakeTimeout: 30,
+	}
+}
+
+func (h *HttpClient) getTransport(cfg TransportConfig) *http.Transport {
+	if h.transport == nil || h.TransportConfig != cfg {
+		clientTransport := transportPool.Get().(*http.Transport)
+		// transport config
+		clientTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: cfg.Insecure}
+		clientTransport.TLSHandshakeTimeout = time.Duration(cfg.TLSHandshakeTimeout) * time.Second
+
+		if cfg.Socks5Address != "" {
+			dialer, err := setProxy(cfg.Socks5Address)
+			if err == nil {
+				clientTransport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+					return dialer.Dial(network, address)
+				}
+			}
+		}
+		h.TransportConfig = cfg
+		h.transport = clientTransport
+	}
+
+	return h.transport
 }
 
 // setProxy Set socks5 proxy
@@ -48,7 +91,7 @@ func setProxy(address string) (proxy.Dialer, error) {
 		},
 	)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("failed to set proxy: " + err.Error())
 	}
 	return dialer, nil
 }
@@ -164,12 +207,12 @@ func (h *HttpClient) SetTimeout(t int) {
 
 // SetProxy Set socks5 proxy
 func (h *HttpClient) SetProxy(addr string) {
-	h.Socks5Address = addr
+	h.getTransport(TransportConfig{Socks5Address: addr})
 }
 
 // SetInsecure Allow Insecure
 func (h *HttpClient) SetInsecure(t bool) {
-	h.Insecure = t
+	h.getTransport(TransportConfig{Insecure: t})
 }
 
 // SetAutoRedirectDisable Disable Redirect
@@ -209,15 +252,14 @@ func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 		return nil, err
 	}
 
-	if h.Timeout == 0 {
-		h.Timeout = 30
-	}
+	transport := h.getTransport(h.TransportConfig)
 
 	client := &http.Client{
-		Jar:     cookieJar,
-		Timeout: time.Duration(h.Timeout) * time.Second,
+		Jar:       cookieJar,
+		Timeout:   time.Duration(h.Timeout) * time.Second,
+		Transport: transport,
 	}
-	clientTransport := new(http.Transport)
+
 	// disable redirect
 	if h.AutoRedirectDisable {
 		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
@@ -226,23 +268,7 @@ func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 	} else {
 		client.CheckRedirect = nil
 	}
-	// allow proxy
-	if h.Socks5Address != "" {
-		dialer, err := setProxy(h.Socks5Address)
-		if err != nil {
-			return nil, err
-		}
-		dialContext := func(ctx context.Context, network, address string) (net.Conn, error) {
-			return dialer.Dial(network, address)
-		}
-		clientTransport.Proxy = nil
-		clientTransport.DialContext = dialContext
-		clientTransport.TLSHandshakeTimeout = time.Duration(30) * time.Second
-	}
-	if h.Insecure {
-		clientTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
-	client.Transport = clientTransport
+
 	// Send Data
 	response, err := client.Do(request)
 	if err != nil {
@@ -254,47 +280,43 @@ func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 	return miniRes, nil
 }
 
-func (h *HttpClient) Get(url string, opts ...any) (*MiniResponse, error) {
-	h.Method = "GET"
+func (h *HttpClient) doRequest(method, url string, opts ...any) (*MiniResponse, error) {
+	h.Method = method
 	return h.Request(url, opts...)
+}
+
+func (h *HttpClient) Get(url string, opts ...any) (*MiniResponse, error) {
+	return h.doRequest("GET", url, opts...)
 }
 
 func (h *HttpClient) Post(url string, opts ...any) (*MiniResponse, error) {
-	h.Method = "POST"
-	return h.Request(url, opts...)
+	return h.doRequest("POST", url, opts...)
 }
 
 func (h *HttpClient) Put(url string, opts ...any) (*MiniResponse, error) {
-	h.Method = "PUT"
-	return h.Request(url, opts...)
+	return h.doRequest("PUT", url, opts...)
 }
 
 func (h *HttpClient) Patch(url string, opts ...any) (*MiniResponse, error) {
-	h.Method = "PATCH"
-	return h.Request(url, opts...)
+	return h.doRequest("PATCH", url, opts...)
 }
 
 func (h *HttpClient) Delete(url string, opts ...any) (*MiniResponse, error) {
-	h.Method = "DELETE"
-	return h.Request(url, opts...)
+	return h.doRequest("DELETE", url, opts...)
 }
 
 func (h *HttpClient) Connect(url string, opts ...any) (*MiniResponse, error) {
-	h.Method = "CONNECT"
-	return h.Request(url, opts...)
+	return h.doRequest("CONNECT", url, opts...)
 }
 
 func (h *HttpClient) Head(url string, opts ...any) (*MiniResponse, error) {
-	h.Method = "HEAD"
-	return h.Request(url, opts...)
+	return h.doRequest("HEAD", url, opts...)
 }
 
 func (h *HttpClient) Options(url string, opts ...any) (*MiniResponse, error) {
-	h.Method = "OPTIONS"
-	return h.Request(url, opts...)
+	return h.doRequest("OPTIONS", url, opts...)
 }
 
 func (h *HttpClient) Trace(url string, opts ...any) (*MiniResponse, error) {
-	h.Method = "TRACE"
-	return h.Request(url, opts...)
+	return h.doRequest("TRACE", url, opts...)
 }
