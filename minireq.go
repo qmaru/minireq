@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net"
@@ -81,7 +81,7 @@ func (h *HttpClient) getTransport(cfg TransportConfig) *http.Transport {
 func setProxy(address string) (proxy.Dialer, error) {
 	addRule := regexp.MustCompile(`^((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})(\.((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})){3}:\d{1,5}$`)
 	if !addRule.MatchString(address) {
-		return nil, errors.New("address is error")
+		return nil, fmt.Errorf("address is error")
 	}
 
 	dialer, err := proxy.SOCKS5("tcp", address, nil,
@@ -91,7 +91,7 @@ func setProxy(address string) (proxy.Dialer, error) {
 		},
 	)
 	if err != nil {
-		return nil, errors.New("failed to set proxy: " + err.Error())
+		return nil, fmt.Errorf("failed to set proxy: %s", err.Error())
 	}
 	return dialer, nil
 }
@@ -123,20 +123,32 @@ func reqOptions(request *http.Request, opts any) (*http.Request, error) {
 		// Fill files
 		if t.Files != nil {
 			files := t.Files
-			for k, v := range files {
-				f, err := os.Open(v)
-				if err != nil {
-					return nil, err
-				}
-				defer f.Close()
-				// create form data
-				fileWriter, err := bodyWriter.CreateFormFile(k, filepath.Base(v))
-				if err != nil {
-					return nil, err
-				}
-				_, err = io.Copy(fileWriter, f)
-				if err != nil {
-					return nil, err
+			for fieldName, fileObj := range files {
+				switch f := fileObj.(type) {
+				case string:
+					file, err := os.Open(f)
+					if err != nil {
+						return nil, err
+					}
+					defer file.Close()
+					// create form data
+					fileWriter, err := bodyWriter.CreateFormFile(fieldName, filepath.Base(f))
+					if err != nil {
+						return nil, err
+					}
+					if _, err = io.Copy(fileWriter, file); err != nil {
+						return nil, err
+					}
+				case *FileInMemory:
+					fileWriter, err := bodyWriter.CreateFormFile(fieldName, f.Filename)
+					if err != nil {
+						return nil, err
+					}
+					if _, err := io.Copy(fileWriter, f.Reader); err != nil {
+						return nil, err
+					}
+				default:
+					return nil, fmt.Errorf("unsupported file type for field %s", fieldName)
 				}
 			}
 		}

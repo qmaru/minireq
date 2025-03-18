@@ -1,12 +1,20 @@
 package minireq
 
-import "net/http"
+import (
+	"io"
+	"net/http"
+)
 
 // DefaultVer Library version
 const DefaultVer = "2.0.0"
 
 // DefaultUA Default User-Agent
 const DefaultUA = "MiniRequest/" + DefaultVer
+
+type FileInMemory struct {
+	Filename string
+	Reader   io.Reader
+}
 
 // Auth Set HTTP Basic Auth
 type Auth []string
@@ -17,7 +25,7 @@ type Cookies []*http.Cookie
 // FormData Use multipart/form-data
 type FormData struct {
 	Values map[string]string
-	Files  map[string]string
+	Files  map[string]any
 }
 
 // FormData Use application/x-www-from-urlencoded
