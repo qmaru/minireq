@@ -3,7 +3,10 @@ package minireq
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
+	"math/rand"
 	"strings"
+	"time"
 
 	"testing"
 )
@@ -229,4 +232,36 @@ func TestAnySet(t *testing.T) {
 		statusCode := res.Response.StatusCode
 		t.Log(statusCode)
 	}
+}
+
+func TestRetry(t *testing.T) {
+	var statusPool = []int{
+		200, 201, 204,
+		408, 429,
+		500, 502, 503, 504,
+	}
+
+	code := statusPool[rand.Intn(len(statusPool))]
+
+	client := NewClient()
+	client.Retry = NewRetryDefaultConfig()
+
+	client.Retry.MaxRetries = 3
+	client.Retry.RetryDelay = RetryFixedDelay(time.Duration(1000 * time.Millisecond))
+	client.Retry.RetryPolicy = RetryPolicyWithStatusCodes(500, 502, 503, 504, 408, 429)
+
+	client.Retry.OnRetry = func(event RetryEvent) {
+		status := event.Status
+		t.Logf("[retry] #%d | status=%d | err=%v | delay=%s\n",
+			event.Attempt, status, event.Err, event.Delay)
+	}
+
+	url := fmt.Sprintf("%s/status/%d", HTTPBIN, code)
+	t.Logf("Request URL: %s\n", url)
+	res, err := client.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusCode := res.Response.StatusCode
+	t.Logf("Latest code: %d\n", statusCode)
 }

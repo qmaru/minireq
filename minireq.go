@@ -36,6 +36,7 @@ type HttpClient struct {
 	Socks5Address       string          // socks5 proxy addr
 	TLSHandshakeTimeout int             // tls handshake timeout
 	TransportConfig     TransportConfig // transport
+	Retry               *RetryConfig    // retry
 	transport           *http.Transport
 }
 
@@ -212,6 +213,71 @@ func reqOptions(request *http.Request, opts any) (*http.Request, error) {
 	return request, nil
 }
 
+func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request) (*http.Response, error) {
+	var (
+		resp        *http.Response
+		err         error
+		maxRetries  int
+		retryPolicy = defaultRetryPolicy
+		retryDelay  = defaultRetryDelay
+		onRetry     = defaultOnRetry
+	)
+
+	if h.Retry != nil {
+		maxRetries = h.Retry.MaxRetries
+
+		if h.Retry.RetryPolicy != nil {
+			retryPolicy = h.Retry.RetryPolicy
+		}
+
+		if h.Retry.RetryDelay != nil {
+			retryDelay = h.Retry.RetryDelay
+		}
+
+		if h.Retry.OnRetry != nil {
+			onRetry = h.Retry.OnRetry
+		}
+	}
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := retryDelay(attempt)
+			if onRetry != nil {
+				status := 0
+				if resp != nil {
+					status = resp.StatusCode
+				}
+				onRetry(RetryEvent{
+					Attempt: attempt,
+					Status:  status,
+					Err:     err,
+					Delay:   delay,
+				})
+			}
+			time.Sleep(delay)
+		}
+
+		if request.GetBody != nil {
+			bodyCopy, err := request.GetBody()
+			if err != nil {
+				return nil, fmt.Errorf("failed to reset request body: %w", err)
+			}
+			request.Body = bodyCopy
+		}
+
+		resp, err = client.Do(request)
+
+		if !retryPolicy(resp, err) {
+			break
+		}
+
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+	}
+	return resp, err
+}
+
 // SetTimeout Set timeout
 func (h *HttpClient) SetTimeout(t int) {
 	h.Timeout = t
@@ -282,7 +348,7 @@ func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 	}
 
 	// Send Data
-	response, err := client.Do(request)
+	response, err := h.doWithRetry(client, request)
 	if err != nil {
 		return nil, err
 	}

@@ -3,6 +3,7 @@ package minireq
 import (
 	"io"
 	"net/http"
+	"time"
 )
 
 // DefaultVer Library version
@@ -39,3 +40,10 @@ type JSONData map[string]any
 
 // Params Set Params
 type Params map[string]string
+
+// Retry
+type OnRetry func(event RetryEvent)
+
+type RetryDelay func(attempt int) time.Duration
+
+type RetryPolicy func(resp *http.Response, err error) bool
