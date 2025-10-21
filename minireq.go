@@ -33,9 +33,6 @@ type HttpClient struct {
 	Method              string          // Request Method
 	Timeout             int             // request timeout
 	AutoRedirectDisable bool            // automatic redirection
-	Insecure            bool            // allow insecure request
-	Socks5Address       string          // socks5 proxy addr
-	TLSHandshakeTimeout int             // tls handshake timeout
 	TransportConfig     TransportConfig // transport
 	Retry               *RetryConfig    // retry
 	transport           *http.Transport
@@ -43,10 +40,7 @@ type HttpClient struct {
 
 type RequestOverride struct {
 	Timeout             *int
-	Insecure            *bool
 	AutoRedirectDisable *bool
-	TLSHandshakeTimeout *int
-	HTTP2Enabled        *bool
 }
 
 var transportPool = sync.Pool{
@@ -71,24 +65,27 @@ func NewClient() *HttpClient {
 	return &HttpClient{
 		Timeout:             30,
 		AutoRedirectDisable: false,
-		Insecure:            false,
-		Socks5Address:       "",
-		TLSHandshakeTimeout: 30,
+		TransportConfig: TransportConfig{
+			Insecure:            false,
+			Socks5Address:       "",
+			TLSHandshakeTimeout: 30,
+			HTTP2Enabled:        false,
+		},
 	}
 }
 
-func (h *HttpClient) getTransport(cfg TransportConfig) *http.Transport {
-	if h.transport != nil && h.TransportConfig == cfg {
+func (h *HttpClient) getTransport() *http.Transport {
+	if h.transport != nil {
 		return h.transport
 	}
 
 	clientTransport := transportPool.Get().(*http.Transport)
-	clientTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: cfg.Insecure}
-	clientTransport.TLSHandshakeTimeout = time.Duration(cfg.TLSHandshakeTimeout) * time.Second
-	clientTransport.ForceAttemptHTTP2 = cfg.HTTP2Enabled
+	clientTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: h.TransportConfig.Insecure}
+	clientTransport.TLSHandshakeTimeout = time.Duration(h.TransportConfig.TLSHandshakeTimeout) * time.Second
+	clientTransport.ForceAttemptHTTP2 = h.TransportConfig.HTTP2Enabled
 
-	if cfg.Socks5Address != "" {
-		dialer, err := setProxy(cfg.Socks5Address)
+	if h.TransportConfig.Socks5Address != "" {
+		dialer, err := setProxy(h.TransportConfig.Socks5Address)
 		if err == nil {
 			clientTransport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 				return dialer.Dial(network, address)
@@ -96,10 +93,7 @@ func (h *HttpClient) getTransport(cfg TransportConfig) *http.Transport {
 		}
 	}
 
-	if cfg == h.TransportConfig {
-		h.transport = clientTransport
-	}
-
+	h.transport = clientTransport
 	return clientTransport
 }
 
@@ -331,6 +325,7 @@ func (h *HttpClient) SetAutoRedirectDisable(t bool) {
 	h.AutoRedirectDisable = t
 }
 
+// SetTLSHandshakeTimeout Set TLS Handshake Timeout
 func (h *HttpClient) SetTLSHandshakeTimeout(t int) {
 	h.TransportConfig.TLSHandshakeTimeout = t
 	h.transport = nil
@@ -377,7 +372,6 @@ func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 	timeout := h.Timeout
 	autoRedirect := h.AutoRedirectDisable
 
-	cfg := h.TransportConfig
 	if override != nil {
 		if override.Timeout != nil {
 			timeout = *override.Timeout
@@ -385,18 +379,9 @@ func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 		if override.AutoRedirectDisable != nil {
 			autoRedirect = *override.AutoRedirectDisable
 		}
-		if override.Insecure != nil {
-			cfg.Insecure = *override.Insecure
-		}
-		if override.TLSHandshakeTimeout != nil {
-			cfg.TLSHandshakeTimeout = *override.TLSHandshakeTimeout
-		}
-		if override.HTTP2Enabled != nil {
-			cfg.HTTP2Enabled = *override.HTTP2Enabled
-		}
 	}
 
-	transport := h.getTransport(cfg)
+	transport := h.getTransport()
 
 	// Make Client
 	cookieJar, err := cookiejar.New(nil)

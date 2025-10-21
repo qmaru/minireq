@@ -299,17 +299,6 @@ func TestOverride(t *testing.T) {
 	transportAddr1 := fmt.Sprintf("%p", client.transport)
 	t.Logf("First transport address: %s\n", transportAddr1)
 
-	res, err = client.Get("https://expired.badssl.com/", &RequestOverride{Insecure: PtrBool(true)})
-	if err != nil {
-		t.Error(err)
-	} else {
-		statusCode := res.Response.StatusCode
-		t.Log(statusCode)
-	}
-
-	transportAddr2 := fmt.Sprintf("%p", client.transport)
-	t.Logf("After request 1 transport address: %s\n", transportAddr2)
-
 	res, err = client.Get(HTTPBIN+"/redirect/1", &RequestOverride{AutoRedirectDisable: PtrBool(true)})
 	if err != nil {
 		t.Error(err)
@@ -317,11 +306,10 @@ func TestOverride(t *testing.T) {
 		statusCode := res.Response.StatusCode
 		t.Logf("redirect disable status: %d", statusCode)
 	}
+	transportAddr2 := fmt.Sprintf("%p", client.transport)
+	t.Logf("After request 1 transport address: %s\n", transportAddr2)
 
-	transportAddr3 := fmt.Sprintf("%p", client.transport)
-	t.Logf("After all override requests, transport address: %s\n", transportAddr3)
-
-	if transportAddr1 == transportAddr3 {
+	if transportAddr1 == transportAddr2 {
 		t.Log("transport reused as expected")
 	} else {
 		t.Error("transport address changed unexpectedly")
