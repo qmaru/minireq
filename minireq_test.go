@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-const HTTPBIN string = "https://httpbin.org"
+const HTTPBIN string = "https://httpbun.com"
 
 func TestGet(t *testing.T) {
 	client := NewClient()
