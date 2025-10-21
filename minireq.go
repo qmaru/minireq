@@ -41,10 +41,30 @@ type HttpClient struct {
 	transport           *http.Transport
 }
 
+type RequestOverride struct {
+	Timeout             *int
+	Insecure            *bool
+	AutoRedirectDisable *bool
+	TLSHandshakeTimeout *int
+	HTTP2Enabled        *bool
+}
+
 var transportPool = sync.Pool{
 	New: func() any {
 		return &http.Transport{}
 	},
+}
+
+func PtrBool(b bool) *bool {
+	return &b
+}
+
+func PtrInt(i int) *int {
+	return &i
+}
+
+func PtrString(s string) *string {
+	return &s
 }
 
 func NewClient() *HttpClient {
@@ -58,26 +78,29 @@ func NewClient() *HttpClient {
 }
 
 func (h *HttpClient) getTransport(cfg TransportConfig) *http.Transport {
-	if h.transport == nil || h.TransportConfig != cfg {
-		clientTransport := transportPool.Get().(*http.Transport)
-		// transport config
-		clientTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: cfg.Insecure}
-		clientTransport.TLSHandshakeTimeout = time.Duration(cfg.TLSHandshakeTimeout) * time.Second
-		clientTransport.ForceAttemptHTTP2 = cfg.HTTP2Enabled
+	if h.transport != nil && h.TransportConfig == cfg {
+		return h.transport
+	}
 
-		if cfg.Socks5Address != "" {
-			dialer, err := setProxy(cfg.Socks5Address)
-			if err == nil {
-				clientTransport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-					return dialer.Dial(network, address)
-				}
+	clientTransport := transportPool.Get().(*http.Transport)
+	clientTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: cfg.Insecure}
+	clientTransport.TLSHandshakeTimeout = time.Duration(cfg.TLSHandshakeTimeout) * time.Second
+	clientTransport.ForceAttemptHTTP2 = cfg.HTTP2Enabled
+
+	if cfg.Socks5Address != "" {
+		dialer, err := setProxy(cfg.Socks5Address)
+		if err == nil {
+			clientTransport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+				return dialer.Dial(network, address)
 			}
 		}
-		h.TransportConfig = cfg
+	}
+
+	if cfg == h.TransportConfig {
 		h.transport = clientTransport
 	}
 
-	return h.transport
+	return clientTransport
 }
 
 // setProxy Set socks5 proxy
@@ -316,11 +339,23 @@ func (h *HttpClient) SetTLSHandshakeTimeout(t int) {
 // Request Universal client
 func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 	var err error
+	var override *RequestOverride
+
+	finalOpts := []any{}
+	for _, opt := range opts {
+		if ro, ok := opt.(*RequestOverride); ok {
+			override = ro
+		} else {
+			finalOpts = append(finalOpts, opt)
+		}
+	}
+
 	// Make URL
 	parseURL, err := URL.Parse(url)
 	if err != nil {
 		return nil, err
 	}
+
 	// Make Request
 	request := &http.Request{
 		URL:    parseURL,
@@ -328,7 +363,7 @@ func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 		Header: make(http.Header),
 	}
 
-	for _, opt := range opts {
+	for _, opt := range finalOpts {
 		request, err = reqOptions(request, opt)
 		if err != nil {
 			return nil, err
@@ -339,27 +374,47 @@ func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 		request.Header.Set("User-Agent", DefaultUA)
 	}
 
+	timeout := h.Timeout
+	autoRedirect := h.AutoRedirectDisable
+
+	cfg := h.TransportConfig
+	if override != nil {
+		if override.Timeout != nil {
+			timeout = *override.Timeout
+		}
+		if override.AutoRedirectDisable != nil {
+			autoRedirect = *override.AutoRedirectDisable
+		}
+		if override.Insecure != nil {
+			cfg.Insecure = *override.Insecure
+		}
+		if override.TLSHandshakeTimeout != nil {
+			cfg.TLSHandshakeTimeout = *override.TLSHandshakeTimeout
+		}
+		if override.HTTP2Enabled != nil {
+			cfg.HTTP2Enabled = *override.HTTP2Enabled
+		}
+	}
+
+	transport := h.getTransport(cfg)
+
 	// Make Client
 	cookieJar, err := cookiejar.New(nil)
 	if err != nil {
 		return nil, err
 	}
 
-	transport := h.getTransport(h.TransportConfig)
-
 	client := &http.Client{
 		Jar:       cookieJar,
-		Timeout:   time.Duration(h.Timeout) * time.Second,
+		Timeout:   time.Duration(timeout) * time.Second,
 		Transport: transport,
 	}
 
 	// disable redirect
-	if h.AutoRedirectDisable {
+	if autoRedirect {
 		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
-	} else {
-		client.CheckRedirect = nil
 	}
 
 	// Send Data

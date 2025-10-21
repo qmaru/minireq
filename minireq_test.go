@@ -203,9 +203,14 @@ func TestPostJSON(t *testing.T) {
 
 func TestAnySet(t *testing.T) {
 	client := NewClient()
-	client.SetTimeout(5)
+
+	startT := time.Now()
+	client.SetTimeout(15)
 	t.Log("set timeout 5s")
 	res, err := client.Get(HTTPBIN + "/delay/3")
+	elapsed := time.Since(startT)
+	t.Logf("elapsed time: %s\n", elapsed)
+
 	if err != nil {
 		t.Fatal(err)
 	} else {
@@ -213,8 +218,11 @@ func TestAnySet(t *testing.T) {
 		t.Log(statusCode)
 	}
 
+	transportAddr1 := fmt.Sprintf("%p", client.transport)
+	t.Logf("First transport address: %s\n", transportAddr1)
+
 	t.Log("set insecure")
-	client.SetInsecure(false)
+	client.SetInsecure(true)
 	res, err = client.Get("https://expired.badssl.com/")
 	if err != nil {
 		t.Error(err)
@@ -222,6 +230,9 @@ func TestAnySet(t *testing.T) {
 		statusCode := res.Response.StatusCode
 		t.Log(statusCode)
 	}
+
+	transportAddr2 := fmt.Sprintf("%p", client.transport)
+	t.Logf("After request 1 transport address: %s\n", transportAddr2)
 
 	t.Log("set redirect")
 	client.SetAutoRedirectDisable(true)
@@ -231,6 +242,15 @@ func TestAnySet(t *testing.T) {
 	} else {
 		statusCode := res.Response.StatusCode
 		t.Log(statusCode)
+	}
+
+	transportAddr3 := fmt.Sprintf("%p", client.transport)
+	t.Logf("After all override requests, transport address: %s\n", transportAddr3)
+
+	if transportAddr1 == transportAddr3 {
+		t.Log("transport reused as expected")
+	} else {
+		t.Error("transport address changed unexpectedly")
 	}
 }
 
@@ -264,4 +284,46 @@ func TestRetry(t *testing.T) {
 	}
 	statusCode := res.Response.StatusCode
 	t.Logf("Latest code: %d\n", statusCode)
+}
+
+func TestOverride(t *testing.T) {
+	client := NewClient()
+
+	res, err := client.Get(HTTPBIN+"/delay/1", &RequestOverride{Timeout: PtrInt(3)})
+	if err != nil {
+		t.Fatal(err)
+	} else {
+		statusCode := res.Response.StatusCode
+		t.Log(statusCode)
+	}
+	transportAddr1 := fmt.Sprintf("%p", client.transport)
+	t.Logf("First transport address: %s\n", transportAddr1)
+
+	res, err = client.Get("https://expired.badssl.com/", &RequestOverride{Insecure: PtrBool(true)})
+	if err != nil {
+		t.Error(err)
+	} else {
+		statusCode := res.Response.StatusCode
+		t.Log(statusCode)
+	}
+
+	transportAddr2 := fmt.Sprintf("%p", client.transport)
+	t.Logf("After request 1 transport address: %s\n", transportAddr2)
+
+	res, err = client.Get(HTTPBIN+"/redirect/1", &RequestOverride{AutoRedirectDisable: PtrBool(true)})
+	if err != nil {
+		t.Error(err)
+	} else {
+		statusCode := res.Response.StatusCode
+		t.Logf("redirect disable status: %d", statusCode)
+	}
+
+	transportAddr3 := fmt.Sprintf("%p", client.transport)
+	t.Logf("After all override requests, transport address: %s\n", transportAddr3)
+
+	if transportAddr1 == transportAddr3 {
+		t.Log("transport reused as expected")
+	} else {
+		t.Error("transport address changed unexpectedly")
+	}
 }
