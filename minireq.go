@@ -26,6 +26,7 @@ type TransportConfig struct {
 	Insecure            bool   // allow insecure request
 	Socks5Address       string // socks5 proxy addr
 	TLSHandshakeTimeout int    // tls handshake timeout
+	HTTP2Enabled        bool   // enable HTTP/2
 }
 
 type HttpClient struct {
@@ -62,6 +63,7 @@ func (h *HttpClient) getTransport(cfg TransportConfig) *http.Transport {
 		// transport config
 		clientTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: cfg.Insecure}
 		clientTransport.TLSHandshakeTimeout = time.Duration(cfg.TLSHandshakeTimeout) * time.Second
+		clientTransport.ForceAttemptHTTP2 = cfg.HTTP2Enabled
 
 		if cfg.Socks5Address != "" {
 			dialer, err := setProxy(cfg.Socks5Address)
@@ -278,6 +280,12 @@ func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request) (*h
 	return resp, err
 }
 
+// Enable HTTP2
+func (h *HttpClient) EnableHTTP2(enable bool) {
+	h.TransportConfig.HTTP2Enabled = enable
+	h.transport = nil
+}
+
 // SetTimeout Set timeout
 func (h *HttpClient) SetTimeout(t int) {
 	h.Timeout = t
@@ -285,17 +293,24 @@ func (h *HttpClient) SetTimeout(t int) {
 
 // SetProxy Set socks5 proxy
 func (h *HttpClient) SetProxy(addr string) {
-	h.getTransport(TransportConfig{Socks5Address: addr})
+	h.TransportConfig.Socks5Address = addr
+	h.transport = nil
 }
 
 // SetInsecure Allow Insecure
 func (h *HttpClient) SetInsecure(t bool) {
-	h.getTransport(TransportConfig{Insecure: t})
+	h.TransportConfig.Insecure = t
+	h.transport = nil
 }
 
 // SetAutoRedirectDisable Disable Redirect
 func (h *HttpClient) SetAutoRedirectDisable(t bool) {
 	h.AutoRedirectDisable = t
+}
+
+func (h *HttpClient) SetTLSHandshakeTimeout(t int) {
+	h.TransportConfig.TLSHandshakeTimeout = t
+	h.transport = nil
 }
 
 // Request Universal client
