@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -30,23 +29,18 @@ type TransportConfig struct {
 }
 
 type HttpClient struct {
-	Method              string          // Request Method
-	Timeout             int             // request timeout
-	AutoRedirectDisable bool            // automatic redirection
-	TransportConfig     TransportConfig // transport
-	Retry               *RetryConfig    // retry
-	transport           *http.Transport
+	Method               string          // Request Method
+	Timeout              int             // request timeout
+	AutoRedirectDisabled bool            // automatic redirection
+	TransportConfig      TransportConfig // transport
+	Retry                *RetryConfig    // retry
+	transport            *http.Transport // custom transport
+	Jar                  http.CookieJar  // cookie jar
 }
 
 type RequestOverride struct {
-	Timeout             *int
-	AutoRedirectDisable *bool
-}
-
-var transportPool = sync.Pool{
-	New: func() any {
-		return &http.Transport{}
-	},
+	Timeout              *int
+	AutoRedirectDisabled *bool
 }
 
 func PtrBool(b bool) *bool {
@@ -63,10 +57,8 @@ func PtrString(s string) *string {
 
 func NewClient() *HttpClient {
 	return &HttpClient{
-		Timeout:             30,
-		AutoRedirectDisable: false,
+		Timeout: 30,
 		TransportConfig: TransportConfig{
-			Insecure:            false,
 			Socks5Address:       "",
 			TLSHandshakeTimeout: 30,
 			HTTP2Enabled:        false,
@@ -79,10 +71,11 @@ func (h *HttpClient) getTransport() *http.Transport {
 		return h.transport
 	}
 
-	clientTransport := transportPool.Get().(*http.Transport)
-	clientTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: h.TransportConfig.Insecure}
-	clientTransport.TLSHandshakeTimeout = time.Duration(h.TransportConfig.TLSHandshakeTimeout) * time.Second
-	clientTransport.ForceAttemptHTTP2 = h.TransportConfig.HTTP2Enabled
+	clientTransport := &http.Transport{
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: h.TransportConfig.Insecure},
+		TLSHandshakeTimeout: time.Duration(h.TransportConfig.TLSHandshakeTimeout) * time.Second,
+		ForceAttemptHTTP2:   h.TransportConfig.HTTP2Enabled,
+	}
 
 	if h.TransportConfig.Socks5Address != "" {
 		dialer, err := setProxy(h.TransportConfig.Socks5Address)
@@ -297,38 +290,54 @@ func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request) (*h
 	return resp, err
 }
 
-// Enable HTTP2
-func (h *HttpClient) EnableHTTP2(enable bool) {
-	h.TransportConfig.HTTP2Enabled = enable
-	h.transport = nil
+// SetTimeout Set timeout
+func (h *HttpClient) SetTimeout(i int) {
+	h.Timeout = i
 }
 
-// SetTimeout Set timeout
-func (h *HttpClient) SetTimeout(t int) {
-	h.Timeout = t
+// DisableAutoRedirect Disable Redirect
+func (h *HttpClient) DisableAutoRedirect(enabled bool) {
+	h.AutoRedirectDisabled = enabled
 }
 
 // SetProxy Set socks5 proxy
 func (h *HttpClient) SetProxy(addr string) {
+	old := h.transport
 	h.TransportConfig.Socks5Address = addr
 	h.transport = nil
+	if old != nil {
+		old.CloseIdleConnections()
+	}
+}
+
+// SetHTTP2 Enable HTTP2
+func (h *HttpClient) SetHTTP2(enabled bool) {
+	old := h.transport
+	h.TransportConfig.HTTP2Enabled = enabled
+	h.transport = nil
+	if old != nil {
+		old.CloseIdleConnections()
+	}
 }
 
 // SetInsecure Allow Insecure
-func (h *HttpClient) SetInsecure(t bool) {
-	h.TransportConfig.Insecure = t
+func (h *HttpClient) SetInsecure(enabled bool) {
+	old := h.transport
+	h.TransportConfig.Insecure = enabled
 	h.transport = nil
-}
-
-// SetAutoRedirectDisable Disable Redirect
-func (h *HttpClient) SetAutoRedirectDisable(t bool) {
-	h.AutoRedirectDisable = t
+	if old != nil {
+		old.CloseIdleConnections()
+	}
 }
 
 // SetTLSHandshakeTimeout Set TLS Handshake Timeout
 func (h *HttpClient) SetTLSHandshakeTimeout(t int) {
+	old := h.transport
 	h.TransportConfig.TLSHandshakeTimeout = t
 	h.transport = nil
+	if old != nil {
+		old.CloseIdleConnections()
+	}
 }
 
 // Request Universal client
@@ -370,27 +379,30 @@ func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 	}
 
 	timeout := h.Timeout
-	autoRedirect := h.AutoRedirectDisable
+	autoRedirect := h.AutoRedirectDisabled
 
 	if override != nil {
 		if override.Timeout != nil {
 			timeout = *override.Timeout
 		}
-		if override.AutoRedirectDisable != nil {
-			autoRedirect = *override.AutoRedirectDisable
+		if override.AutoRedirectDisabled != nil {
+			autoRedirect = *override.AutoRedirectDisabled
 		}
 	}
 
 	transport := h.getTransport()
 
 	// Make Client
-	cookieJar, err := cookiejar.New(nil)
-	if err != nil {
-		return nil, err
+	if h.Jar == nil {
+		jar, err := cookiejar.New(nil)
+		if err != nil {
+			return nil, err
+		}
+		h.Jar = jar
 	}
 
 	client := &http.Client{
-		Jar:       cookieJar,
+		Jar:       h.Jar,
 		Timeout:   time.Duration(timeout) * time.Second,
 		Transport: transport,
 	}

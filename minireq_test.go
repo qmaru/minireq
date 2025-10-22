@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"math/rand"
 	"strings"
+	"sync"
 	"time"
 
 	"testing"
@@ -201,6 +203,72 @@ func TestPostJSON(t *testing.T) {
 	}
 }
 
+func TestRetry(t *testing.T) {
+	var statusPool = []int{
+		200, 201, 204,
+		408, 429,
+		500, 502, 503, 504,
+	}
+
+	code := statusPool[rand.Intn(len(statusPool))]
+
+	client := NewClient()
+	client.Retry = NewRetryDefaultConfig()
+
+	client.Retry.MaxRetries = 3
+	client.Retry.RetryDelay = RetryFixedDelay(time.Duration(1000 * time.Millisecond))
+	client.Retry.RetryPolicy = RetryPolicyWithStatusCodes(500, 502, 503, 504, 408, 429)
+
+	client.Retry.OnRetry = func(event RetryEvent) {
+		status := event.Status
+		t.Logf("[retry] #%d | status=%d | err=%v | delay=%s\n",
+			event.Attempt, status, event.Err, event.Delay)
+	}
+
+	url := fmt.Sprintf("%s/status/%d", HTTPBIN, code)
+	t.Logf("Request URL: %s\n", url)
+	res, err := client.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusCode := res.Response.StatusCode
+	t.Logf("Latest code: %d\n", statusCode)
+}
+
+func TestStreamBody(t *testing.T) {
+	client := NewClient()
+	res, err := client.Get(HTTPBIN + "/bytes/4096")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if res.bodyCache != nil {
+		t.Fatalf("expected no bodyCache before stream, got len=%d", len(res.bodyCache))
+	}
+
+	stream, err := res.ReadStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	var buf bytes.Buffer
+	n, err := io.Copy(&buf, stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if n != 4096 {
+		t.Fatalf("expected 4096 bytes, got %d", n)
+	} else {
+		t.Logf("succeed, got %d bytes", n)
+	}
+
+	if res.Response != nil && res.Response.Body != nil {
+		t.Fatalf("expected res.Response.Body == nil after ReadStream ownership transfer")
+	}
+}
+
 func TestAnySet(t *testing.T) {
 	client := NewClient()
 
@@ -235,7 +303,7 @@ func TestAnySet(t *testing.T) {
 	t.Logf("After request 1 transport address: %s\n", transportAddr2)
 
 	t.Log("set redirect")
-	client.SetAutoRedirectDisable(true)
+	client.DisableAutoRedirect(true)
 	res, err = client.Get(HTTPBIN + "/redirect/3")
 	if err != nil {
 		t.Error(err)
@@ -254,38 +322,6 @@ func TestAnySet(t *testing.T) {
 	}
 }
 
-func TestRetry(t *testing.T) {
-	var statusPool = []int{
-		200, 201, 204,
-		408, 429,
-		500, 502, 503, 504,
-	}
-
-	code := statusPool[rand.Intn(len(statusPool))]
-
-	client := NewClient()
-	client.Retry = NewRetryDefaultConfig()
-
-	client.Retry.MaxRetries = 3
-	client.Retry.RetryDelay = RetryFixedDelay(time.Duration(1000 * time.Millisecond))
-	client.Retry.RetryPolicy = RetryPolicyWithStatusCodes(500, 502, 503, 504, 408, 429)
-
-	client.Retry.OnRetry = func(event RetryEvent) {
-		status := event.Status
-		t.Logf("[retry] #%d | status=%d | err=%v | delay=%s\n",
-			event.Attempt, status, event.Err, event.Delay)
-	}
-
-	url := fmt.Sprintf("%s/status/%d", HTTPBIN, code)
-	t.Logf("Request URL: %s\n", url)
-	res, err := client.Get(url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	statusCode := res.Response.StatusCode
-	t.Logf("Latest code: %d\n", statusCode)
-}
-
 func TestOverride(t *testing.T) {
 	client := NewClient()
 
@@ -299,7 +335,7 @@ func TestOverride(t *testing.T) {
 	transportAddr1 := fmt.Sprintf("%p", client.transport)
 	t.Logf("First transport address: %s\n", transportAddr1)
 
-	res, err = client.Get(HTTPBIN+"/redirect/1", &RequestOverride{AutoRedirectDisable: PtrBool(true)})
+	res, err = client.Get(HTTPBIN+"/redirect/1", &RequestOverride{AutoRedirectDisabled: PtrBool(true)})
 	if err != nil {
 		t.Error(err)
 	} else {
@@ -313,5 +349,55 @@ func TestOverride(t *testing.T) {
 		t.Log("transport reused as expected")
 	} else {
 		t.Error("transport address changed unexpectedly")
+	}
+}
+
+func TestClientReuse(t *testing.T) {
+	client := NewClient()
+	client.SetTimeout(15)
+
+	const workers = 10
+	results := make(chan string, workers)
+	errs := make(chan error, workers)
+
+	var wg sync.WaitGroup
+	wg.Add(workers)
+
+	for i := 0; i < workers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			res, err := client.Get(HTTPBIN + "/get")
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer res.Response.Body.Close()
+
+			_, _ = io.Copy(io.Discard, res.Response.Body)
+			results <- fmt.Sprintf("%p", client.transport)
+		}(i)
+	}
+
+	wg.Wait()
+	close(results)
+	close(errs)
+
+	if len(errs) > 0 {
+		for e := range errs {
+			t.Fatalf("request failed: %v", e)
+		}
+	}
+
+	addrs := make(map[string]int)
+	for a := range results {
+		addrs[a]++
+	}
+
+	if len(addrs) != 1 {
+		t.Errorf("expected single transport reused, got %d distinct: %v", len(addrs), addrs)
+	} else {
+		for k, v := range addrs {
+			t.Logf("transport reused %d times: %s", v, k)
+		}
 	}
 }
