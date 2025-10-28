@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -34,13 +35,13 @@ type TransportConfig struct {
 }
 
 type HttpClient struct {
-	Method               string          // Request Method
 	Timeout              int             // request timeout
 	AutoRedirectDisabled bool            // automatic redirection
 	TransportConfig      TransportConfig // transport
 	Retry                *RetryConfig    // retry
 	transport            *http.Transport // custom transport
 	Jar                  http.CookieJar  // cookie jar
+	mu                   sync.RWMutex
 }
 
 type RequestOverride struct {
@@ -61,7 +62,7 @@ func PtrString(s string) *string {
 }
 
 func NewClient() *HttpClient {
-	return &HttpClient{
+	h := &HttpClient{
 		Timeout: 30,
 		TransportConfig: TransportConfig{
 			Socks5ProxyAddress:  "",
@@ -69,27 +70,44 @@ func NewClient() *HttpClient {
 			HTTP2Enabled:        true,
 		},
 	}
+
+	if jar, err := cookiejar.New(nil); err == nil {
+		h.Jar = jar
+	}
+
+	return h
 }
 
 func (h *HttpClient) getTransport() *http.Transport {
+	h.mu.RLock()
+	t := h.transport
+	h.mu.RUnlock()
+	if t != nil {
+		return t
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.transport != nil {
 		return h.transport
 	}
 
+	cfg := h.TransportConfig
+
 	clientTransport := &http.Transport{
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: h.TransportConfig.Insecure},
-		TLSHandshakeTimeout: time.Duration(h.TransportConfig.TLSHandshakeTimeout) * time.Second,
-		ForceAttemptHTTP2:   h.TransportConfig.HTTP2Enabled,
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: cfg.Insecure},
+		TLSHandshakeTimeout: time.Duration(cfg.TLSHandshakeTimeout) * time.Second,
+		ForceAttemptHTTP2:   cfg.HTTP2Enabled,
 	}
 
-	if h.TransportConfig.HttpProxyAddress != "" {
-		if pu, err := URL.Parse(h.TransportConfig.HttpProxyAddress); err == nil {
+	if cfg.HttpProxyAddress != "" {
+		if pu, err := URL.Parse(cfg.HttpProxyAddress); err == nil {
 			clientTransport.Proxy = http.ProxyURL(pu)
 		}
 	}
 
-	if h.TransportConfig.Socks5ProxyAddress != "" {
-		dialer, err := setProxy(h.TransportConfig.Socks5ProxyAddress)
+	if cfg.Socks5ProxyAddress != "" {
+		dialer, err := setProxy(cfg.Socks5ProxyAddress)
 		if err == nil {
 			clientTransport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 				return dialer.Dial(network, address)
@@ -97,17 +115,17 @@ func (h *HttpClient) getTransport() *http.Transport {
 		}
 	}
 
-	if h.TransportConfig.MaxIdleConns > 0 {
-		clientTransport.MaxIdleConns = h.TransportConfig.MaxIdleConns
+	if cfg.MaxIdleConns > 0 {
+		clientTransport.MaxIdleConns = cfg.MaxIdleConns
 	}
-	if h.TransportConfig.MaxIdleConnsPerHost > 0 {
-		clientTransport.MaxIdleConnsPerHost = h.TransportConfig.MaxIdleConnsPerHost
+	if cfg.MaxIdleConnsPerHost > 0 {
+		clientTransport.MaxIdleConnsPerHost = cfg.MaxIdleConnsPerHost
 	}
-	if h.TransportConfig.IdleConnTimeout > 0 {
-		clientTransport.IdleConnTimeout = time.Duration(h.TransportConfig.IdleConnTimeout) * time.Second
+	if cfg.IdleConnTimeout > 0 {
+		clientTransport.IdleConnTimeout = time.Duration(cfg.IdleConnTimeout) * time.Second
 	}
-	if h.TransportConfig.ResponseHeaderTimeout > 0 {
-		clientTransport.ResponseHeaderTimeout = time.Duration(h.TransportConfig.ResponseHeaderTimeout) * time.Second
+	if cfg.ResponseHeaderTimeout > 0 {
+		clientTransport.ResponseHeaderTimeout = time.Duration(cfg.ResponseHeaderTimeout) * time.Second
 	}
 
 	h.transport = clientTransport
@@ -316,22 +334,28 @@ func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request) (*h
 
 // SetTimeout Set timeout
 func (h *HttpClient) SetTimeout(i int) {
+	h.mu.Lock()
 	h.Timeout = i
+	h.mu.Unlock()
 }
 
 // DisableAutoRedirect Disable Redirect
 func (h *HttpClient) DisableAutoRedirect(enabled bool) {
+	h.mu.Lock()
 	h.AutoRedirectDisabled = enabled
+	h.mu.Unlock()
 }
 
 // SetSocks5Proxy Set socks5 proxy
 func (h *HttpClient) SetSocks5Proxy(addr string) {
+	h.mu.Lock()
 	old := h.transport
 	h.TransportConfig.Socks5ProxyAddress = addr
 	if addr != "" {
 		h.TransportConfig.HttpProxyAddress = ""
 	}
 	h.transport = nil
+	h.mu.Unlock()
 	if old != nil {
 		old.CloseIdleConnections()
 	}
@@ -339,12 +363,14 @@ func (h *HttpClient) SetSocks5Proxy(addr string) {
 
 // SetHttpProxyURL Set http proxy
 func (h *HttpClient) SetHttpProxyURL(proxyURL string) {
+	h.mu.Lock()
 	old := h.transport
 	h.TransportConfig.HttpProxyAddress = proxyURL
 	if proxyURL != "" {
 		h.TransportConfig.Socks5ProxyAddress = ""
 	}
 	h.transport = nil
+	h.mu.Unlock()
 	if old != nil {
 		old.CloseIdleConnections()
 	}
@@ -352,9 +378,11 @@ func (h *HttpClient) SetHttpProxyURL(proxyURL string) {
 
 // SetMaxIdleConns Set Max Idle Connections
 func (h *HttpClient) SetMaxIdleConns(n int) {
+	h.mu.Lock()
 	old := h.transport
 	h.TransportConfig.MaxIdleConns = n
 	h.transport = nil
+	h.mu.Unlock()
 	if old != nil {
 		old.CloseIdleConnections()
 	}
@@ -362,9 +390,11 @@ func (h *HttpClient) SetMaxIdleConns(n int) {
 
 // SetMaxIdleConnsPerHost Set Max Idle Connections Per Host
 func (h *HttpClient) SetMaxIdleConnsPerHost(n int) {
+	h.mu.Lock()
 	old := h.transport
 	h.TransportConfig.MaxIdleConnsPerHost = n
 	h.transport = nil
+	h.mu.Unlock()
 	if old != nil {
 		old.CloseIdleConnections()
 	}
@@ -372,9 +402,11 @@ func (h *HttpClient) SetMaxIdleConnsPerHost(n int) {
 
 // SetIdleConnTimeout Set Idle Connection Timeout
 func (h *HttpClient) SetIdleConnTimeout(seconds int) {
+	h.mu.Lock()
 	old := h.transport
 	h.TransportConfig.IdleConnTimeout = seconds
 	h.transport = nil
+	h.mu.Unlock()
 	if old != nil {
 		old.CloseIdleConnections()
 	}
@@ -382,9 +414,11 @@ func (h *HttpClient) SetIdleConnTimeout(seconds int) {
 
 // SetResponseHeaderTimeout Set Response Header Timeout
 func (h *HttpClient) SetResponseHeaderTimeout(seconds int) {
+	h.mu.Lock()
 	old := h.transport
 	h.TransportConfig.ResponseHeaderTimeout = seconds
 	h.transport = nil
+	h.mu.Unlock()
 	if old != nil {
 		old.CloseIdleConnections()
 	}
@@ -392,9 +426,12 @@ func (h *HttpClient) SetResponseHeaderTimeout(seconds int) {
 
 // SetHTTP2 Enable HTTP2
 func (h *HttpClient) SetHTTP2(enabled bool) {
+	h.mu.Lock()
 	old := h.transport
 	h.TransportConfig.HTTP2Enabled = enabled
 	h.transport = nil
+	h.mu.Unlock()
+
 	if old != nil {
 		old.CloseIdleConnections()
 	}
@@ -402,9 +439,11 @@ func (h *HttpClient) SetHTTP2(enabled bool) {
 
 // SetInsecure Allow Insecure
 func (h *HttpClient) SetInsecure(enabled bool) {
+	h.mu.Lock()
 	old := h.transport
 	h.TransportConfig.Insecure = enabled
 	h.transport = nil
+	h.mu.Unlock()
 	if old != nil {
 		old.CloseIdleConnections()
 	}
@@ -412,16 +451,18 @@ func (h *HttpClient) SetInsecure(enabled bool) {
 
 // SetTLSHandshakeTimeout Set TLS Handshake Timeout
 func (h *HttpClient) SetTLSHandshakeTimeout(t int) {
+	h.mu.Lock()
 	old := h.transport
 	h.TransportConfig.TLSHandshakeTimeout = t
 	h.transport = nil
+	h.mu.Unlock()
 	if old != nil {
 		old.CloseIdleConnections()
 	}
 }
 
 // Request Universal client
-func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
+func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniResponse, error) {
 	var err error
 	var override *RequestOverride
 
@@ -443,7 +484,7 @@ func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 	// Make Request
 	request := &http.Request{
 		URL:    parseURL,
-		Method: h.Method,
+		Method: method,
 		Header: make(http.Header),
 	}
 
@@ -458,8 +499,10 @@ func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 		request.Header.Set("User-Agent", DefaultUA)
 	}
 
+	h.mu.RLock()
 	timeout := h.Timeout
 	autoRedirect := h.AutoRedirectDisabled
+	h.mu.RUnlock()
 
 	if override != nil {
 		if override.Timeout != nil {
@@ -472,17 +515,27 @@ func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 
 	transport := h.getTransport()
 
+	h.mu.RLock()
+	jar := h.Jar
+	h.mu.RUnlock()
+
 	// Make Client
-	if h.Jar == nil {
-		jar, err := cookiejar.New(nil)
-		if err != nil {
-			return nil, err
+	if jar == nil {
+		h.mu.Lock()
+		if h.Jar == nil { // double-check
+			j, err := cookiejar.New(nil)
+			if err != nil {
+				h.mu.Unlock()
+				return nil, err
+			}
+			h.Jar = j
 		}
-		h.Jar = jar
+		jar = h.Jar
+		h.mu.Unlock()
 	}
 
 	client := &http.Client{
-		Jar:       h.Jar,
+		Jar:       jar,
 		Timeout:   time.Duration(timeout) * time.Second,
 		Transport: transport,
 	}
@@ -505,43 +558,38 @@ func (h *HttpClient) Request(url string, opts ...any) (*MiniResponse, error) {
 	return miniRes, nil
 }
 
-func (h *HttpClient) doRequest(method, url string, opts ...any) (*MiniResponse, error) {
-	h.Method = method
-	return h.Request(url, opts...)
-}
-
 func (h *HttpClient) Get(url string, opts ...any) (*MiniResponse, error) {
-	return h.doRequest("GET", url, opts...)
+	return h.RequestWithMethod("GET", url, opts...)
 }
 
 func (h *HttpClient) Post(url string, opts ...any) (*MiniResponse, error) {
-	return h.doRequest("POST", url, opts...)
+	return h.RequestWithMethod("POST", url, opts...)
 }
 
 func (h *HttpClient) Put(url string, opts ...any) (*MiniResponse, error) {
-	return h.doRequest("PUT", url, opts...)
+	return h.RequestWithMethod("PUT", url, opts...)
 }
 
 func (h *HttpClient) Patch(url string, opts ...any) (*MiniResponse, error) {
-	return h.doRequest("PATCH", url, opts...)
+	return h.RequestWithMethod("PATCH", url, opts...)
 }
 
 func (h *HttpClient) Delete(url string, opts ...any) (*MiniResponse, error) {
-	return h.doRequest("DELETE", url, opts...)
+	return h.RequestWithMethod("DELETE", url, opts...)
 }
 
 func (h *HttpClient) Connect(url string, opts ...any) (*MiniResponse, error) {
-	return h.doRequest("CONNECT", url, opts...)
+	return h.RequestWithMethod("CONNECT", url, opts...)
 }
 
 func (h *HttpClient) Head(url string, opts ...any) (*MiniResponse, error) {
-	return h.doRequest("HEAD", url, opts...)
+	return h.RequestWithMethod("HEAD", url, opts...)
 }
 
 func (h *HttpClient) Options(url string, opts ...any) (*MiniResponse, error) {
-	return h.doRequest("OPTIONS", url, opts...)
+	return h.RequestWithMethod("OPTIONS", url, opts...)
 }
 
 func (h *HttpClient) Trace(url string, opts ...any) (*MiniResponse, error) {
-	return h.doRequest("TRACE", url, opts...)
+	return h.RequestWithMethod("TRACE", url, opts...)
 }
