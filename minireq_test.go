@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -304,7 +305,7 @@ func TestAnySet(t *testing.T) {
 		t.Log(statusCode)
 	}
 
-	transportAddr1 := fmt.Sprintf("%p", client.transport)
+	transportAddr1 := fmt.Sprintf("%p", client.transport.Load())
 	t.Logf("First transport address: %s\n", transportAddr1)
 
 	t.Log("set insecure")
@@ -317,7 +318,7 @@ func TestAnySet(t *testing.T) {
 		t.Log(statusCode)
 	}
 
-	transportAddr2 := fmt.Sprintf("%p", client.transport)
+	transportAddr2 := fmt.Sprintf("%p", client.transport.Load())
 	t.Logf("After request 1 transport address: %s\n", transportAddr2)
 
 	t.Log("set redirect")
@@ -330,7 +331,7 @@ func TestAnySet(t *testing.T) {
 		t.Log(statusCode)
 	}
 
-	transportAddr3 := fmt.Sprintf("%p", client.transport)
+	transportAddr3 := fmt.Sprintf("%p", client.transport.Load())
 	t.Logf("After all override requests, transport address: %s\n", transportAddr3)
 
 	if transportAddr1 == transportAddr3 {
@@ -343,14 +344,14 @@ func TestAnySet(t *testing.T) {
 func TestOverride(t *testing.T) {
 	client := NewClient()
 
-	res, err := client.Get(HTTPBIN+"/delay/1", &RequestOverride{Timeout: PtrInt(3)})
+	res, err := client.Get(HTTPBIN+"/delay/1", &RequestOverride{Timeout: PtrInt64(3)})
 	if err != nil {
 		t.Fatal(err)
 	} else {
 		statusCode := res.Response.StatusCode
 		t.Log(statusCode)
 	}
-	transportAddr1 := fmt.Sprintf("%p", client.transport)
+	transportAddr1 := fmt.Sprintf("%p", client.transport.Load())
 	t.Logf("First transport address: %s\n", transportAddr1)
 
 	res, err = client.Get(HTTPBIN+"/redirect/1", &RequestOverride{AutoRedirectDisabled: PtrBool(true)})
@@ -360,7 +361,7 @@ func TestOverride(t *testing.T) {
 		statusCode := res.Response.StatusCode
 		t.Logf("redirect disable status: %d", statusCode)
 	}
-	transportAddr2 := fmt.Sprintf("%p", client.transport)
+	transportAddr2 := fmt.Sprintf("%p", client.transport.Load())
 	t.Logf("After request 1 transport address: %s\n", transportAddr2)
 
 	if transportAddr1 == transportAddr2 {
@@ -392,7 +393,7 @@ func TestClientReuse(t *testing.T) {
 			defer res.Response.Body.Close()
 
 			_, _ = io.Copy(io.Discard, res.Response.Body)
-			results <- fmt.Sprintf("%p", client.transport)
+			results <- fmt.Sprintf("%p", client.transport.Load())
 		}(i)
 	}
 
@@ -418,4 +419,58 @@ func TestClientReuse(t *testing.T) {
 			t.Logf("transport reused %d times: %s", v, k)
 		}
 	}
+}
+
+func TestRace(t *testing.T) {
+	c := NewClient()
+
+	const (
+		requestGoroutines = 8
+		setterGoroutines  = 4
+		loopsPerWorker    = 8
+	)
+
+	var wg sync.WaitGroup
+
+	wg.Add(requestGoroutines)
+	for i := 0; i < requestGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < loopsPerWorker; j++ {
+				params := Params{"foo": strconv.Itoa(id), "n": strconv.Itoa(j)}
+				_, err := c.Get(HTTPBIN+"/get", params)
+				if err != nil {
+					t.Logf("request err: %v", err)
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		}(i)
+	}
+
+	wg.Add(setterGoroutines)
+	for i := 0; i < setterGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < loopsPerWorker; j++ {
+				switch j % 7 {
+				case 1:
+					c.SetHttpProxyURL("")
+				case 2:
+					c.SetMaxIdleConns(50 + (id+j)%50)
+				case 3:
+					c.SetMaxIdleConnsPerHost(5 + (id+j)%20)
+				case 4:
+					c.SetIdleConnTimeout(20 + (id+j)%20)
+				case 5:
+					c.SetHTTP2(j%2 == 0)
+				case 6:
+					c.SetInsecure(j%2 == 0)
+				}
+				c.SetTimeout(int64(3 + (id+j)%10))
+				time.Sleep(6 * time.Millisecond)
+			}
+		}(i)
+	}
+
+	wg.Wait()
 }
