@@ -22,10 +22,15 @@ import (
 )
 
 type TransportConfig struct {
-	Insecure            bool   // allow insecure request
-	Socks5Address       string // socks5 proxy addr
-	TLSHandshakeTimeout int    // tls handshake timeout
-	HTTP2Enabled        bool   // enable HTTP/2
+	Insecure              bool   // allow insecure request
+	HttpProxyAddress      string // http proxy addr
+	Socks5ProxyAddress    string // socks5 proxy addr
+	TLSHandshakeTimeout   int    // tls handshake timeout
+	HTTP2Enabled          bool   // enable HTTP/2
+	MaxIdleConns          int    // maximum idle connections
+	MaxIdleConnsPerHost   int    // maximum idle connections per host
+	IdleConnTimeout       int    // seconds
+	ResponseHeaderTimeout int    // seconds
 }
 
 type HttpClient struct {
@@ -59,9 +64,9 @@ func NewClient() *HttpClient {
 	return &HttpClient{
 		Timeout: 30,
 		TransportConfig: TransportConfig{
-			Socks5Address:       "",
+			Socks5ProxyAddress:  "",
 			TLSHandshakeTimeout: 30,
-			HTTP2Enabled:        false,
+			HTTP2Enabled:        true,
 		},
 	}
 }
@@ -77,13 +82,32 @@ func (h *HttpClient) getTransport() *http.Transport {
 		ForceAttemptHTTP2:   h.TransportConfig.HTTP2Enabled,
 	}
 
-	if h.TransportConfig.Socks5Address != "" {
-		dialer, err := setProxy(h.TransportConfig.Socks5Address)
+	if h.TransportConfig.HttpProxyAddress != "" {
+		if pu, err := URL.Parse(h.TransportConfig.HttpProxyAddress); err == nil {
+			clientTransport.Proxy = http.ProxyURL(pu)
+		}
+	}
+
+	if h.TransportConfig.Socks5ProxyAddress != "" {
+		dialer, err := setProxy(h.TransportConfig.Socks5ProxyAddress)
 		if err == nil {
 			clientTransport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 				return dialer.Dial(network, address)
 			}
 		}
+	}
+
+	if h.TransportConfig.MaxIdleConns > 0 {
+		clientTransport.MaxIdleConns = h.TransportConfig.MaxIdleConns
+	}
+	if h.TransportConfig.MaxIdleConnsPerHost > 0 {
+		clientTransport.MaxIdleConnsPerHost = h.TransportConfig.MaxIdleConnsPerHost
+	}
+	if h.TransportConfig.IdleConnTimeout > 0 {
+		clientTransport.IdleConnTimeout = time.Duration(h.TransportConfig.IdleConnTimeout) * time.Second
+	}
+	if h.TransportConfig.ResponseHeaderTimeout > 0 {
+		clientTransport.ResponseHeaderTimeout = time.Duration(h.TransportConfig.ResponseHeaderTimeout) * time.Second
 	}
 
 	h.transport = clientTransport
@@ -300,10 +324,66 @@ func (h *HttpClient) DisableAutoRedirect(enabled bool) {
 	h.AutoRedirectDisabled = enabled
 }
 
-// SetProxy Set socks5 proxy
-func (h *HttpClient) SetProxy(addr string) {
+// SetSocks5Proxy Set socks5 proxy
+func (h *HttpClient) SetSocks5Proxy(addr string) {
 	old := h.transport
-	h.TransportConfig.Socks5Address = addr
+	h.TransportConfig.Socks5ProxyAddress = addr
+	if addr != "" {
+		h.TransportConfig.HttpProxyAddress = ""
+	}
+	h.transport = nil
+	if old != nil {
+		old.CloseIdleConnections()
+	}
+}
+
+// SetHttpProxyURL Set http proxy
+func (h *HttpClient) SetHttpProxyURL(proxyURL string) {
+	old := h.transport
+	h.TransportConfig.HttpProxyAddress = proxyURL
+	if proxyURL != "" {
+		h.TransportConfig.Socks5ProxyAddress = ""
+	}
+	h.transport = nil
+	if old != nil {
+		old.CloseIdleConnections()
+	}
+}
+
+// SetMaxIdleConns Set Max Idle Connections
+func (h *HttpClient) SetMaxIdleConns(n int) {
+	old := h.transport
+	h.TransportConfig.MaxIdleConns = n
+	h.transport = nil
+	if old != nil {
+		old.CloseIdleConnections()
+	}
+}
+
+// SetMaxIdleConnsPerHost Set Max Idle Connections Per Host
+func (h *HttpClient) SetMaxIdleConnsPerHost(n int) {
+	old := h.transport
+	h.TransportConfig.MaxIdleConnsPerHost = n
+	h.transport = nil
+	if old != nil {
+		old.CloseIdleConnections()
+	}
+}
+
+// SetIdleConnTimeout Set Idle Connection Timeout
+func (h *HttpClient) SetIdleConnTimeout(seconds int) {
+	old := h.transport
+	h.TransportConfig.IdleConnTimeout = seconds
+	h.transport = nil
+	if old != nil {
+		old.CloseIdleConnections()
+	}
+}
+
+// SetResponseHeaderTimeout Set Response Header Timeout
+func (h *HttpClient) SetResponseHeaderTimeout(seconds int) {
+	old := h.transport
+	h.TransportConfig.ResponseHeaderTimeout = seconds
 	h.transport = nil
 	if old != nil {
 		old.CloseIdleConnections()

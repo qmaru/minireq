@@ -39,8 +39,26 @@ func TestGet(t *testing.T) {
 
 func TestProxy(t *testing.T) {
 	client := NewClient()
-	client.SetProxy("127.0.0.1:1080")
+
+	t.Log("s5 proxy")
+	client.SetSocks5Proxy("127.0.0.1:1080")
 	res, err := client.Get(HTTPBIN + "/ip")
+	if err != nil {
+		t.Error(err)
+	} else {
+		rawData, err := res.RawJSON()
+		if err != nil {
+			t.Error(err)
+		} else {
+			jsonData := rawData.(map[string]any)
+			ip := jsonData["origin"]
+			t.Log(ip)
+		}
+	}
+
+	t.Log("http proxy")
+	client.SetHttpProxyURL("http://127.0.0.1:1080")
+	res, err = client.Get(HTTPBIN + "/ip")
 	if err != nil {
 		t.Error(err)
 	} else {
