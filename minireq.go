@@ -26,12 +26,12 @@ type transportConfig struct {
 	Insecure              bool   // allow insecure request
 	HttpProxyAddress      string // http proxy addr
 	Socks5ProxyAddress    string // socks5 proxy addr
-	TLSHandshakeTimeout   int    // tls handshake timeout
+	TLSHandshakeTimeout   int    // tls handshake timeout (seconds)
 	HTTP2Enabled          bool   // enable HTTP/2
 	MaxIdleConns          int    // maximum idle connections
 	MaxIdleConnsPerHost   int    // maximum idle connections per host
-	IdleConnTimeout       int    // seconds
-	ResponseHeaderTimeout int    // seconds
+	IdleConnTimeout       int    // idle connection timeout (seconds)
+	ResponseHeaderTimeout int    // response header timeout (seconds)
 }
 
 type HttpClient struct {
@@ -44,7 +44,7 @@ type HttpClient struct {
 }
 
 type RequestOverride struct {
-	Timeout              *int64
+	Timeout              *int64 // seconds
 	AutoRedirectDisabled *bool
 }
 
@@ -362,7 +362,7 @@ func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request) (*h
 	return resp, err
 }
 
-// SetTimeout Set timeout
+// SetTimeout Set timeout in seconds
 func (h *HttpClient) SetTimeout(i int64) {
 	h.timeout.Store(i)
 }
@@ -418,7 +418,7 @@ func (h *HttpClient) SetMaxIdleConnsPerHost(n int) {
 	}
 }
 
-// SetIdleConnTimeout Set Idle Connection Timeout
+// SetIdleConnTimeout Set Idle Connection Timeout (seconds)
 func (h *HttpClient) SetIdleConnTimeout(seconds int) {
 	cfg := h.loadConfig()
 	cfg.IdleConnTimeout = seconds
@@ -428,7 +428,7 @@ func (h *HttpClient) SetIdleConnTimeout(seconds int) {
 	}
 }
 
-// SetResponseHeaderTimeout Set Response Header Timeout
+// SetResponseHeaderTimeout Set Response Header Timeout (seconds)
 func (h *HttpClient) SetResponseHeaderTimeout(seconds int) {
 	cfg := h.loadConfig()
 	cfg.ResponseHeaderTimeout = seconds
@@ -458,7 +458,7 @@ func (h *HttpClient) SetInsecure(enabled bool) {
 	}
 }
 
-// SetTLSHandshakeTimeout Set TLS Handshake Timeout
+// SetTLSHandshakeTimeout Set TLS Handshake Timeout (seconds)
 func (h *HttpClient) SetTLSHandshakeTimeout(t int) {
 	cfg := h.loadConfig()
 	cfg.TLSHandshakeTimeout = t
