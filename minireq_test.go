@@ -223,28 +223,38 @@ func TestPostJSON(t *testing.T) {
 }
 
 func TestRetry(t *testing.T) {
-	var statusPool = []int{
+	testCodePool := []int{
 		200, 201, 204,
 		408, 429,
 		500, 502, 503, 504,
 	}
 
-	code := statusPool[rand.Intn(len(statusPool))]
+	rpmPool := []int{5, 10, 20, 50, 100, 1000}
+
+	maxRetries := 3
+	rpm := rpmPool[rand.Intn(len(rpmPool))]
+	errCode := []int{500, 502, 503, 504, 408, 429}
+
+	retryDelayFn, err := RetryExponentialDelayFromRPM(rpm, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	client := NewClient()
 	client.Retry = NewRetryDefaultConfig()
 
-	client.Retry.MaxRetries = 3
-	client.Retry.RetryDelay = RetryFixedDelay(time.Duration(1000 * time.Millisecond))
-	client.Retry.RetryPolicy = RetryPolicyWithStatusCodes(500, 502, 503, 504, 408, 429)
+	client.Retry.MaxRetries = maxRetries
+	client.Retry.RetryDelay = retryDelayFn
+	client.Retry.RetryPolicy = RetryPolicyWithStatusCodes(errCode...)
 
 	client.Retry.OnRetry = func(event RetryEvent) {
 		status := event.Status
-		t.Logf("[retry] #%d | status=%d | err=%v | delay=%s\n",
-			event.Attempt, status, event.Err, event.Delay)
+		t.Logf("[retry] #%d | rpm=%d | status=%d | err=%v | delay=%s\n",
+			event.Attempt, rpm, status, event.Err, event.Delay)
 	}
 
-	url := fmt.Sprintf("%s/status/%d", HTTPBIN, code)
+	testCode := testCodePool[rand.Intn(len(testCodePool))]
+	url := fmt.Sprintf("%s/status/%d", HTTPBIN, testCode)
 	t.Logf("Request URL: %s\n", url)
 	res, err := client.Get(url)
 	if err != nil {

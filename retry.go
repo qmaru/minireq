@@ -44,17 +44,6 @@ func BackoffBaseForWindow(window time.Duration, maxRetries int) (time.Duration, 
 	return window / time.Duration(1<<(maxRetries-1)), nil
 }
 
-func CalcSafeExponentialBaseDelay(minInterval time.Duration, window time.Duration, maxRetries int) (time.Duration, error) {
-	base, err := BackoffBaseForWindow(window, maxRetries)
-	if err != nil {
-		return 0, err
-	}
-	if base < minInterval {
-		return minInterval, nil
-	}
-	return base, nil
-}
-
 func NewRetryDefaultConfig() *RetryConfig {
 	return &RetryConfig{
 		MaxRetries:  3,
@@ -86,18 +75,13 @@ func RetryExponentialDelay(baseDelay time.Duration, jitterRatio float64) RetryDe
 	}
 }
 
-func RetryExponentialDelayFromRPM(rpm, maxRetries int, window time.Duration, jitterRatio float64) (RetryDelay, error) {
+func RetryExponentialDelayFromRPM(rpm int, jitterRatio float64) (RetryDelay, error) {
 	minInterval, err := RPMToMinInterval(rpm)
 	if err != nil {
 		return nil, err
 	}
 
-	baseDelay, err := CalcSafeExponentialBaseDelay(minInterval, window, maxRetries)
-	if err != nil {
-		return nil, err
-	}
-
-	return RetryExponentialDelay(baseDelay, jitterRatio), nil
+	return RetryExponentialDelay(minInterval, jitterRatio), nil
 }
 
 func RetryLinearDelay(baseDelay time.Duration) RetryDelay {
