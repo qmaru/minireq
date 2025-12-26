@@ -1,13 +1,15 @@
 package minireq
 
 import (
+	"errors"
+	"math/rand"
 	"net/http"
 	"time"
 )
 
 var defaultRetryPolicy = RetryPolicyWithStatusRange(500, 599)
 
-var defaultRetryDelay = RetryExponentialDelay(100 * time.Millisecond)
+var defaultRetryDelay = RetryExponentialDelay(100*time.Millisecond, 0.1)
 
 var defaultOnRetry = func(event RetryEvent) {}
 
@@ -25,6 +27,34 @@ type RetryConfig struct {
 	OnRetry     OnRetry
 }
 
+// RPMToMinInterval converts requests per minute to minimum interval between requests.
+func RPMToMinInterval(rpm int) (time.Duration, error) {
+	if rpm <= 0 {
+		return 0, errors.New("rpm must be > 0")
+	}
+	return time.Minute / time.Duration(rpm), nil
+}
+
+// BackoffBaseForWindow calculates the base delay for exponential backoff
+func BackoffBaseForWindow(window time.Duration, maxRetries int) (time.Duration, error) {
+	if maxRetries <= 0 {
+		return 0, errors.New("maxRetries must > 0")
+	}
+
+	return window / time.Duration(1<<(maxRetries-1)), nil
+}
+
+func CalcSafeExponentialBaseDelay(minInterval time.Duration, window time.Duration, maxRetries int) (time.Duration, error) {
+	base, err := BackoffBaseForWindow(window, maxRetries)
+	if err != nil {
+		return 0, err
+	}
+	if base < minInterval {
+		return minInterval, nil
+	}
+	return base, nil
+}
+
 func NewRetryDefaultConfig() *RetryConfig {
 	return &RetryConfig{
 		MaxRetries:  3,
@@ -40,13 +70,34 @@ func RetryFixedDelay(delay time.Duration) RetryDelay {
 	}
 }
 
-func RetryExponentialDelay(baseDelay time.Duration) RetryDelay {
+func RetryExponentialDelay(baseDelay time.Duration, jitterRatio float64) RetryDelay {
 	return func(attempt int) time.Duration {
 		if attempt <= 0 {
 			attempt = 1
 		}
-		return baseDelay * (1 << (attempt - 1))
+
+		delay := baseDelay * (1 << (attempt - 1))
+		if jitterRatio <= 0 {
+			return delay
+		}
+
+		jitter := 1 + (rand.Float64()*2-1)*jitterRatio
+		return time.Duration(float64(delay) * jitter)
 	}
+}
+
+func RetryExponentialDelayFromRPM(rpm, maxRetries int, window time.Duration, jitterRatio float64) (RetryDelay, error) {
+	minInterval, err := RPMToMinInterval(rpm)
+	if err != nil {
+		return nil, err
+	}
+
+	baseDelay, err := CalcSafeExponentialBaseDelay(minInterval, window, maxRetries)
+	if err != nil {
+		return nil, err
+	}
+
+	return RetryExponentialDelay(baseDelay, jitterRatio), nil
 }
 
 func RetryLinearDelay(baseDelay time.Duration) RetryDelay {
