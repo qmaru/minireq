@@ -484,3 +484,39 @@ func TestRace(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestSSE(t *testing.T) {
+	client := NewClient()
+	res, err := client.Get(HTTPBIN + "/sse")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	eventCount := 0
+	err = res.StreamSSE(func(event SSEEvent) error {
+		fmt.Printf("Event: %s, Data: %s\n", event.Event, event.Data)
+		eventCount++
+		return nil
+	})
+
+	// sseReader, err := res.StreamSSE()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// defer sseReader.Close()
+
+	// eventCount := 0
+	// for {
+	// 	event, err := sseReader.ReadEvent()
+	// 	if err != nil {
+	// 		if err == io.EOF {
+	// 			break
+	// 		}
+	// 		t.Fatal(err)
+	// 	}
+	// 	t.Logf("Event ID: %s, Event Type: %s, Data: %s\n", event.ID, event.Event, event.Data)
+	// 	eventCount++
+	// }
+
+	t.Logf("Total events received: %d\n", eventCount)
+}

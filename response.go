@@ -101,3 +101,38 @@ func (res *MiniResponse) ReadStream() (io.ReadCloser, error) {
 	res.Response.Body = nil
 	return body, nil
 }
+
+func (res *MiniResponse) ReadSSE() (*SSEReader, error) {
+	if res.bodyCache != nil {
+		return NewSSEReader(io.NopCloser(bytes.NewReader(res.bodyCache))), nil
+	}
+	if res.Response == nil || res.Response.Body == nil {
+		return nil, fmt.Errorf("response or response body is nil")
+	}
+
+	body := res.Response.Body
+	res.Response.Body = nil
+	return NewSSEReader(body), nil
+}
+
+func (res *MiniResponse) StreamSSE(callback func(event SSEEvent) error) error {
+	reader, err := res.ReadSSE()
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+
+	for {
+		event, err := reader.ReadEvent()
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+
+		if err := callback(*event); err != nil {
+			return err
+		}
+	}
+}
