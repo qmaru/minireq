@@ -99,15 +99,21 @@ func RetryNoDelay() func(attempt int) time.Duration {
 	}
 }
 
+func RetryPolicyWithStatusCode(statusCode int) RetryPolicy {
+	return func(resp *http.Response, err error) bool {
+		if resp == nil {
+			return false
+		}
+		return statusCode == resp.StatusCode
+	}
+}
+
 func RetryPolicyWithStatusCodes(statusCodes ...int) RetryPolicy {
 	allowed := make(map[int]struct{}, len(statusCodes))
 	for _, code := range statusCodes {
 		allowed[code] = struct{}{}
 	}
 	return func(resp *http.Response, err error) bool {
-		if err != nil {
-			return true
-		}
 		if resp == nil {
 			return false
 		}
@@ -118,9 +124,6 @@ func RetryPolicyWithStatusCodes(statusCodes ...int) RetryPolicy {
 
 func RetryPolicyWithStatusRange(min, max int) RetryPolicy {
 	return func(resp *http.Response, err error) bool {
-		if err != nil {
-			return true
-		}
 		if resp == nil {
 			return false
 		}
@@ -137,9 +140,40 @@ func RetryPolicyWithErrorCheck(check func(error) bool) RetryPolicy {
 	}
 }
 
-func RetryCombinePolicies(policies ...func(*http.Response, error) bool) func(*http.Response, error) bool {
+func RetryAny(policies ...RetryPolicy) RetryPolicy {
 	return func(resp *http.Response, err error) bool {
 		for _, p := range policies {
+			if p(resp, err) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+func RetryAll(policies ...RetryPolicy) RetryPolicy {
+	return func(resp *http.Response, err error) bool {
+		if len(policies) == 0 {
+			return false
+		}
+
+		for _, p := range policies {
+			if !p(resp, err) {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+func RetryDenyAllow(deny []RetryPolicy, allow []RetryPolicy) RetryPolicy {
+	return func(resp *http.Response, err error) bool {
+		for _, p := range deny {
+			if p(resp, err) {
+				return false
+			}
+		}
+		for _, p := range allow {
 			if p(resp, err) {
 				return true
 			}
