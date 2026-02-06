@@ -264,6 +264,111 @@ func TestRetry(t *testing.T) {
 	t.Logf("Latest code: %d\n", statusCode)
 }
 
+func TestRetry2(t *testing.T) {
+	client := NewClient()
+	client.SetTimeout(30)
+
+	t.Log("Retry policy 1")
+	retryConfig1 := &RetryConfig{
+		MaxRetries:  2,
+		RetryPolicy: RetryPolicyWithStatusCodes(500, 502, 503, 504),
+		RetryDelay:  RetryFixedDelay(100 * time.Millisecond),
+		OnRetry: func(event RetryEvent) {
+			t.Logf("[Retry1] Attempt #%d | Status: %d | Delay: %s",
+				event.Attempt, event.Status, event.Delay)
+		},
+	}
+
+	res1, err := client.Get(HTTPBIN+"/status/500", retryConfig1)
+	if err != nil {
+		t.Logf("Request 1 error: %v", err)
+	} else {
+		t.Logf("Request 1 final status: %d", res1.Response.StatusCode)
+	}
+
+	t.Log("Retry policy 2")
+	retryConfig2 := &RetryConfig{
+		MaxRetries:  5,
+		RetryPolicy: RetryPolicyWithStatusCodes(408, 429),
+		RetryDelay:  RetryExponentialDelay(50*time.Millisecond, 0.1),
+		OnRetry: func(event RetryEvent) {
+			t.Logf("[Retry2] Attempt #%d | Status: %d | Delay: %s",
+				event.Attempt, event.Status, event.Delay)
+		},
+	}
+
+	res2, err := client.Get(HTTPBIN+"/status/429", retryConfig2)
+	if err != nil {
+		t.Logf("Request 2 error: %v", err)
+	} else {
+		t.Logf("Request 2 final status: %d", res2.Response.StatusCode)
+	}
+
+	t.Log("Retry policy 3")
+	res3, err := client.Get(HTTPBIN + "/status/200")
+	if err != nil {
+		t.Logf("Request 3 error: %v", err)
+	} else {
+		t.Logf("Request 3 final status: %d", res3.Response.StatusCode)
+	}
+
+	t.Log("Retry policy 4: Concurrent requests with different retry configs")
+	var wg sync.WaitGroup
+	results := make(chan string, 3)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		retryConf := &RetryConfig{
+			MaxRetries:  2,
+			RetryPolicy: RetryPolicyWithStatusCodes(503),
+			RetryDelay:  RetryFixedDelay(50 * time.Millisecond),
+		}
+		res, err := client.Get(HTTPBIN+"/status/503", retryConf)
+		if err != nil {
+			results <- fmt.Sprintf("Concurrent1 error: %v", err)
+		} else {
+			results <- fmt.Sprintf("Concurrent1 status: %d", res.Response.StatusCode)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		retryConf := &RetryConfig{
+			MaxRetries:  1,
+			RetryPolicy: RetryPolicyWithStatusCodes(502),
+			RetryDelay:  RetryFixedDelay(75 * time.Millisecond),
+		}
+		res, err := client.Get(HTTPBIN+"/status/502", retryConf)
+		if err != nil {
+			results <- fmt.Sprintf("Concurrent2 error: %v", err)
+		} else {
+			results <- fmt.Sprintf("Concurrent2 status: %d", res.Response.StatusCode)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		res, err := client.Get(HTTPBIN + "/status/200")
+		if err != nil {
+			results <- fmt.Sprintf("Concurrent3 error: %v", err)
+		} else {
+			results <- fmt.Sprintf("Concurrent3 status: %d", res.Response.StatusCode)
+		}
+	}()
+
+	wg.Wait()
+	close(results)
+
+	for result := range results {
+		t.Log(result)
+	}
+
+	t.Log("completed all concurrent requests")
+}
+
 func TestStreamBody(t *testing.T) {
 	client := NewClient()
 	res, err := client.Get(HTTPBIN + "/bytes/4096")

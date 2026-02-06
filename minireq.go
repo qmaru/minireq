@@ -184,6 +184,7 @@ func setS5Proxy(address string) (proxy.Dialer, error) {
 // reqOptions construct a body
 func reqOptions(request *http.Request, opts any) (*http.Request, error) {
 	switch t := opts.(type) {
+	case *RetryConfig:
 	case Auth:
 		request.SetBasicAuth(t[0], t[1])
 	case Cookies:
@@ -297,7 +298,7 @@ func reqOptions(request *http.Request, opts any) (*http.Request, error) {
 	return request, nil
 }
 
-func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request) (*http.Response, error) {
+func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request, retryConfig *RetryConfig) (*http.Response, error) {
 	var (
 		resp        *http.Response
 		err         error
@@ -307,19 +308,19 @@ func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request) (*h
 		onRetry     = defaultOnRetry
 	)
 
-	if h.Retry != nil {
-		maxRetries = h.Retry.MaxRetries
+	if retryConfig != nil {
+		maxRetries = retryConfig.MaxRetries
 
-		if h.Retry.RetryPolicy != nil {
-			retryPolicy = h.Retry.RetryPolicy
+		if retryConfig.RetryPolicy != nil {
+			retryPolicy = retryConfig.RetryPolicy
 		}
 
-		if h.Retry.RetryDelay != nil {
-			retryDelay = h.Retry.RetryDelay
+		if retryConfig.RetryDelay != nil {
+			retryDelay = retryConfig.RetryDelay
 		}
 
-		if h.Retry.OnRetry != nil {
-			onRetry = h.Retry.OnRetry
+		if retryConfig.OnRetry != nil {
+			onRetry = retryConfig.OnRetry
 		}
 	}
 
@@ -472,11 +473,14 @@ func (h *HttpClient) SetTLSHandshakeTimeout(t int) {
 func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniResponse, error) {
 	var err error
 	var override *RequestOverride
+	var retryConfig *RetryConfig
 
 	finalOpts := []any{}
 	for _, opt := range opts {
 		if ro, ok := opt.(*RequestOverride); ok {
 			override = ro
+		} else if rc, ok := opt.(*RetryConfig); ok {
+			retryConfig = rc
 		} else {
 			finalOpts = append(finalOpts, opt)
 		}
@@ -551,6 +555,12 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 		}
 	}
 
+	// retry
+	effectiveRetryConfig := h.Retry
+	if retryConfig != nil {
+		effectiveRetryConfig = retryConfig
+	}
+
 	// Send Data
 	reqForSend := request.Clone(context.Background())
 	if request.GetBody != nil {
@@ -559,7 +569,7 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 			reqForSend.GetBody = request.GetBody
 		}
 	}
-	response, err := h.doWithRetry(client, reqForSend)
+	response, err := h.doWithRetry(client, reqForSend, effectiveRetryConfig)
 	if err != nil {
 		return nil, err
 	}
