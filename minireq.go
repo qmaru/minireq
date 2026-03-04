@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -36,6 +35,7 @@ type transportConfig struct {
 
 type HttpClient struct {
 	Retry        *RetryConfig                   // retry
+	codec        JSONCodec                      // per-client JSON codec
 	transport    atomic.Pointer[http.Transport] // stores http.Transport
 	jar          atomic.Value                   // stores http.CookieJar
 	cfg          atomic.Value                   // stores TransportConfig
@@ -71,6 +71,7 @@ func PtrString(s string) *string {
 func NewClient() *HttpClient {
 	h := &HttpClient{
 		Retry: nil,
+		codec: DefaultJSONCodec,
 	}
 
 	// initialize defaults
@@ -182,7 +183,7 @@ func setS5Proxy(address string) (proxy.Dialer, error) {
 }
 
 // reqOptions construct a body
-func reqOptions(request *http.Request, opts any) (*http.Request, error) {
+func reqOptions(request *http.Request, opts any, codec JSONCodec) (*http.Request, error) {
 	switch t := opts.(type) {
 	case *RetryConfig:
 	case Auth:
@@ -274,7 +275,7 @@ func reqOptions(request *http.Request, opts any) (*http.Request, error) {
 			request.Header.Set(k, v)
 		}
 	case JSONData:
-		jsonByte, err := json.Marshal(t)
+		jsonByte, err := codec.Marshal(t)
 		if err != nil {
 			return nil, err
 		}
@@ -361,6 +362,21 @@ func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request, ret
 		}
 	}
 	return resp, err
+}
+
+// SetJSONCodec sets the JSON codec for this client instance
+// Pass nil to reset to the default encoding/json implementation
+func (h *HttpClient) SetJSONCodec(codec JSONCodec) {
+	if codec == nil {
+		h.codec = DefaultJSONCodec
+		return
+	}
+	h.codec = codec
+}
+
+// GetJSONCodec returns the JSON codec for this client instance
+func (h *HttpClient) GetJSONCodec() JSONCodec {
+	return h.codec
 }
 
 // SetTimeout Set timeout in seconds
@@ -500,7 +516,7 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 	}
 
 	for _, opt := range finalOpts {
-		request, err = reqOptions(request, opt)
+		request, err = reqOptions(request, opt, h.codec)
 		if err != nil {
 			return nil, err
 		}
@@ -576,6 +592,7 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 	miniRes := new(MiniResponse)
 	miniRes.Request = request
 	miniRes.Response = response
+	miniRes.codec = h.codec
 	return miniRes, nil
 }
 

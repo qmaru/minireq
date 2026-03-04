@@ -16,10 +16,28 @@ type SSEEvent struct {
 	Retry int64
 }
 
+// NDJSONEvent represents a newline-delimited JSON event
+type NDJSONEvent struct {
+	Data  []byte
+	codec JSONCodec
+}
+
+// Unmarshal parses the JSON data into the given value
+func (e *NDJSONEvent) Unmarshal(v any) error {
+	return e.codec.Unmarshal(e.Data, v)
+}
+
 // SSEReader reads Server-Sent Events from a stream
 type SSEReader struct {
 	reader *bufio.Reader
 	closer io.Closer
+}
+
+// NDJSONReader reads newline-delimited JSON from a stream
+type NDJSONReader struct {
+	scanner *bufio.Scanner
+	closer  io.Closer
+	codec   JSONCodec
 }
 
 // NewSSEReader creates a new SSE reader
@@ -101,6 +119,59 @@ func (r *SSEReader) Close() error {
 // Events returns a channel that yields SSE events
 func (r *SSEReader) Events() <-chan SSEEvent {
 	ch := make(chan SSEEvent)
+	go func() {
+		defer close(ch)
+		for {
+			event, err := r.ReadEvent()
+			if err != nil {
+				return
+			}
+			ch <- *event
+		}
+	}()
+	return ch
+}
+
+// ReadEvent reads the next NDJSON event (one JSON object per line)
+func (r *NDJSONReader) ReadEvent() (*NDJSONEvent, error) {
+	for r.scanner.Scan() {
+		line := bytes.TrimSpace(r.scanner.Bytes())
+		// skip empty lines
+		if len(line) == 0 {
+			continue
+		}
+		// make a copy since scanner reuses the buffer
+		data := make([]byte, len(line))
+		copy(data, line)
+
+		// validate JSON
+		if !r.codec.Valid(data) {
+			return nil, fmt.Errorf("invalid JSON: %s", string(data))
+		}
+
+		return &NDJSONEvent{
+			Data:  data,
+			codec: r.codec,
+		}, nil
+	}
+
+	if err := r.scanner.Err(); err != nil {
+		return nil, err
+	}
+	return nil, io.EOF
+}
+
+// Close closes the underlying reader
+func (r *NDJSONReader) Close() error {
+	if r.closer != nil {
+		return r.closer.Close()
+	}
+	return nil
+}
+
+// Events returns a channel that yields NDJSON events
+func (r *NDJSONReader) Events() <-chan NDJSONEvent {
+	ch := make(chan NDJSONEvent)
 	go func() {
 		defer close(ch)
 		for {

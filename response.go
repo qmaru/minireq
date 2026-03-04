@@ -1,16 +1,18 @@
 package minireq
 
 import (
+	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 type MiniResponse struct {
 	Request   *http.Request
 	Response  *http.Response
+	codec     JSONCodec
 	bodyCache []byte
 }
 
@@ -64,7 +66,7 @@ func (res *MiniResponse) RawJSON() (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = json.Unmarshal(rawData, &jsonData)
+	err = res.codec.Unmarshal(rawData, &jsonData)
 	if err != nil {
 		return nil, err
 	}
@@ -74,15 +76,11 @@ func (res *MiniResponse) RawJSON() (any, error) {
 // RawNumJSON JSON data with real number
 func (res *MiniResponse) RawNumJSON() (any, error) {
 	var jsonData any
-
 	rawData, err := res.RawData()
 	if err != nil {
 		return nil, err
 	}
-
-	dec := json.NewDecoder(bytes.NewReader(rawData))
-	dec.UseNumber()
-	err = dec.Decode(&jsonData)
+	err = res.codec.UnmarshalNumber(rawData, &jsonData)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +113,48 @@ func (res *MiniResponse) ReadSSE() (*SSEReader, error) {
 	return NewSSEReader(body), nil
 }
 
+// ReadNDJSON returns an NDJSONReader for reading newline-delimited JSON streams
+func (res *MiniResponse) ReadNDJSON() (*NDJSONReader, error) {
+	if res.bodyCache != nil {
+		return &NDJSONReader{
+			scanner: bufio.NewScanner(io.NopCloser(bytes.NewReader(res.bodyCache))),
+			closer:  io.NopCloser(bytes.NewReader(res.bodyCache)),
+			codec:   res.codec,
+		}, nil
+	}
+	if res.Response == nil || res.Response.Body == nil {
+		return nil, fmt.Errorf("response or response body is nil")
+	}
+
+	body := res.Response.Body
+	res.Response.Body = nil
+	return &NDJSONReader{
+		scanner: bufio.NewScanner(body),
+		closer:  body,
+		codec:   res.codec,
+	}, nil
+}
+
+// ReadStreamAuto automatically detects content type and returns SSEReader or NDJSONReader
+// Returns (sseReader, nil, nil) for SSE, or (nil, ndjsonReader, nil) for NDJSON
+func (res *MiniResponse) ReadStreamAuto() (*SSEReader, *NDJSONReader, error) {
+	contentType := ""
+	if res.Response != nil {
+		contentType = res.Response.Header.Get("Content-Type")
+	}
+
+	if strings.Contains(contentType, "application/x-ndjson") ||
+		strings.Contains(contentType, "application/jsonl") ||
+		strings.Contains(contentType, "application/json-lines") {
+		reader, err := res.ReadNDJSON()
+		return nil, reader, err
+	}
+
+	// default to SSE
+	reader, err := res.ReadSSE()
+	return reader, nil, err
+}
+
 func (res *MiniResponse) StreamSSE(callback func(event SSEEvent) error) error {
 	reader, err := res.ReadSSE()
 	if err != nil {
@@ -132,6 +172,57 @@ func (res *MiniResponse) StreamSSE(callback func(event SSEEvent) error) error {
 		}
 
 		if err := callback(*event); err != nil {
+			return err
+		}
+	}
+}
+
+// StreamNDJSON iterates over NDJSON events and calls the callback for each one
+func (res *MiniResponse) StreamNDJSON(callback func(event NDJSONEvent) error) error {
+	reader, err := res.ReadNDJSON()
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+
+	for {
+		event, err := reader.ReadEvent()
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+
+		if err := callback(*event); err != nil {
+			return err
+		}
+	}
+}
+
+// StreamNDJSONUnmarshal iterates over NDJSON events, unmarshals each into a new instance of the given type, and calls callback
+func StreamNDJSONUnmarshal[T any](res *MiniResponse, callback func(item T) error) error {
+	reader, err := res.ReadNDJSON()
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+
+	for {
+		event, err := reader.ReadEvent()
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+
+		var item T
+		if err := res.codec.Unmarshal(event.Data, &item); err != nil {
+			return fmt.Errorf("failed to unmarshal NDJSON: %w", err)
+		}
+
+		if err := callback(item); err != nil {
 			return err
 		}
 	}
