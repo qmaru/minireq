@@ -2,6 +2,7 @@ package minireq
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -624,4 +625,18 @@ func TestSSE(t *testing.T) {
 	// }
 
 	t.Logf("Total events received: %d\n", eventCount)
+}
+
+func TestContextCancel(t *testing.T) {
+	t.Log("Testing request cancellation with context timeout")
+	client := NewClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := client.Get(HTTPBIN+"/delay/5", ctx)
+	if err != nil {
+		t.Logf("Request cancelled as expected: %v", err)
+	} else {
+		t.Error("Expected request to be cancelled, but it succeeded")
+	}
 }

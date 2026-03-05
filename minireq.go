@@ -326,6 +326,10 @@ func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request, ret
 	}
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// Check if context is cancelled before each attempt
+		if err := request.Context().Err(); err != nil {
+			return nil, err
+		}
 		if attempt > 0 {
 			delay := retryDelay(attempt)
 			if onRetry != nil {
@@ -490,6 +494,7 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 	var err error
 	var override *RequestOverride
 	var retryConfig *RetryConfig
+	var ctx context.Context
 
 	finalOpts := []any{}
 	for _, opt := range opts {
@@ -497,9 +502,15 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 			override = ro
 		} else if rc, ok := opt.(*RetryConfig); ok {
 			retryConfig = rc
+		} else if c, ok := opt.(context.Context); ok {
+			ctx = c
 		} else {
 			finalOpts = append(finalOpts, opt)
 		}
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	// Make URL
@@ -578,7 +589,7 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 	}
 
 	// Send Data
-	reqForSend := request.Clone(context.Background())
+	reqForSend := request.Clone(ctx)
 	if request.GetBody != nil {
 		if rb, err := request.GetBody(); err == nil {
 			reqForSend.Body = rb
