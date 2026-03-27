@@ -24,6 +24,17 @@ data, _ := res.RawJSON()
 fmt.Println(data)
 ```
 
+## Global headers
+
+You can set global headers on the client:
+
+```go
+client := NewClient()
+client.SetHeader("X-Request-Id", "req-123")
+
+res, err := client.Get("https://postman-echo.com/get")
+```
+
 ## test
 
 ```go

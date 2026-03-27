@@ -223,6 +223,43 @@ func TestPostJSON(t *testing.T) {
 	}
 }
 
+func TestSetHeader(t *testing.T) {
+	client := NewClient()
+	client.SetHeader("X-Global-Header", "test-value")
+	res, err := client.Get(HTTPBIN + "/get")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rawData, err := res.RawJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jsonData := rawData.(map[string]any)
+	headers := jsonData["headers"].(map[string]any)
+	if headers["X-Global-Header"] != "test-value" {
+		t.Fatalf("expected X-Global-Header=test-value, got %v", headers["X-Global-Header"])
+	}
+
+	// per-request override should win
+	res2, err := client.Get(HTTPBIN+"/get", Headers{"X-Global-Header": "override-value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rawData2, err := res2.RawJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jsonData2 := rawData2.(map[string]any)
+	headers2 := jsonData2["headers"].(map[string]any)
+	if headers2["X-Global-Header"] != "override-value" {
+		t.Fatalf("expected X-Global-Header=override-value, got %v", headers2["X-Global-Header"])
+	}
+}
+
 func TestRetry(t *testing.T) {
 	testCodePool := []int{
 		200, 201, 204,

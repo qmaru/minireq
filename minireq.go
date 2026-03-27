@@ -1,6 +1,7 @@
 package minireq
 
 import (
+	"maps"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -34,13 +35,14 @@ type transportConfig struct {
 }
 
 type HttpClient struct {
-	Retry        *RetryConfig                   // retry
-	codec        JSONCodec                      // per-client JSON codec
-	transport    atomic.Pointer[http.Transport] // stores http.Transport
-	jar          atomic.Value                   // stores http.CookieJar
-	cfg          atomic.Value                   // stores TransportConfig
-	timeout      atomic.Int64                   // stores int
-	autoRedirect atomic.Bool                    // stores bool
+	Retry         *RetryConfig                   // retry
+	codec         JSONCodec                      // per-client JSON codec
+	transport     atomic.Pointer[http.Transport] // stores http.Transport
+	jar           atomic.Value                   // stores http.CookieJar
+	cfg           atomic.Value                   // stores TransportConfig
+	globalHeaders atomic.Value                   // stores map[string]string
+	timeout       atomic.Int64                   // stores int
+	autoRedirect  atomic.Bool                    // stores bool
 }
 
 type RequestOverride struct {
@@ -84,6 +86,7 @@ func NewClient() *HttpClient {
 	h.cfg.Store(defaultCfg)
 	h.timeout.Store(30)
 	h.autoRedirect.Store(false)
+	h.globalHeaders.Store(map[string]string{})
 
 	if jar, err := cookiejar.New(nil); err == nil {
 		h.jar.Store(jar)
@@ -105,6 +108,27 @@ func (h *HttpClient) loadConfig() transportConfig {
 
 func (h *HttpClient) storeConfig(c transportConfig) {
 	h.cfg.Store(c)
+}
+
+func (h *HttpClient) loadHeaders() map[string]string {
+	if v := h.globalHeaders.Load(); v != nil {
+		return v.(map[string]string)
+	}
+	return map[string]string{}
+}
+
+// SetHeader sets a global header on the client.
+// Passing value == "" removes the header.
+func (h *HttpClient) SetHeader(key, value string) {
+	current := h.loadHeaders()
+	newHeaders := make(map[string]string, len(current)+1)
+	maps.Copy(newHeaders, current)
+	if value == "" {
+		delete(newHeaders, key)
+	} else {
+		newHeaders[key] = value
+	}
+	h.globalHeaders.Store(newHeaders)
 }
 
 func (h *HttpClient) getTransport() *http.Transport {
@@ -524,6 +548,11 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 		URL:    parseURL,
 		Method: method,
 		Header: make(http.Header),
+	}
+
+	// apply global headers first (allow per-request headers to override)
+	for k, v := range h.loadHeaders() {
+		request.Header.Set(k, v)
 	}
 
 	for _, opt := range finalOpts {
