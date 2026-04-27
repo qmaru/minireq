@@ -325,7 +325,7 @@ func reqOptions(request *http.Request, jsonCodec JSONCodec, multipartMode Multip
 			var err error
 
 			switch v := t.(type) {
-			case RawJSON:
+			case JSONRaw:
 				bodyBytes = v
 			default:
 				bodyBytes, err = jsonCodec.Marshal(v)

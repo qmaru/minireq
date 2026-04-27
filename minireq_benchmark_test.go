@@ -119,7 +119,7 @@ func BenchmarkPostJSONParallel(b *testing.B) {
 		b.ResetTimer()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
-				res, err := minireq.Post(url, JSONObject{"foo": "bar"})
+				res, err := minireq.Post(url, JSONMap{"foo": "bar"})
 				if err != nil {
 					b.Fatalf("minireq Post json failed: %v", err)
 				}

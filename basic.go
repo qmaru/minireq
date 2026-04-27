@@ -96,19 +96,19 @@ type JSONPayload interface {
 	IsEmpty() bool
 }
 
-type JSONObject map[string]any
+type JSONMap map[string]any
 
-func (JSONObject) isJSONPayload() {}
+func (JSONMap) isJSONPayload() {}
 
-func (j JSONObject) IsEmpty() bool {
+func (j JSONMap) IsEmpty() bool {
 	return len(j) == 0
 }
 
-type JSONList []any
+type JSONArray []any
 
-func (JSONList) isJSONPayload() {}
+func (JSONArray) isJSONPayload() {}
 
-func (l JSONList) IsEmpty() bool {
+func (l JSONArray) IsEmpty() bool {
 	return len(l) == 0
 }
 
@@ -122,11 +122,11 @@ func (s JSONStruct[T]) IsEmpty() bool {
 	return false
 }
 
-type RawJSON []byte
+type JSONRaw []byte
 
-func (RawJSON) isJSONPayload() {}
+func (JSONRaw) isJSONPayload() {}
 
-func (r RawJSON) IsEmpty() bool {
+func (r JSONRaw) IsEmpty() bool {
 	return len(r) == 0
 }
 

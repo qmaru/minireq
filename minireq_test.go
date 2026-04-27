@@ -221,7 +221,7 @@ func TestPostData(t *testing.T) {
 
 func TestPostJSON(t *testing.T) {
 	client := NewClient()
-	data := JSONObject{"foo": "bar"}
+	data := JSONMap{"foo": "bar"}
 	res, err := client.Post(HTTPBIN+"/post", data)
 	if err != nil {
 		t.Error(err)
