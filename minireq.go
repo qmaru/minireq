@@ -1,19 +1,17 @@
 package minireq
 
 import (
-	"maps"
 	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
 	URL "net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -36,13 +34,14 @@ type transportConfig struct {
 
 type HttpClient struct {
 	Retry         *RetryConfig                   // retry
-	codec         JSONCodec                      // per-client JSON codec
+	jsonCodec     JSONCodec                      // per-client JSON codec
 	transport     atomic.Pointer[http.Transport] // stores http.Transport
-	jar           atomic.Value                   // stores http.CookieJar
 	cfg           atomic.Value                   // stores TransportConfig
-	globalHeaders atomic.Value                   // stores map[string]string
-	timeout       atomic.Int64                   // stores int
-	autoRedirect  atomic.Bool                    // stores bool
+	jar           atomic.Value                   // stores http.CookieJar
+	globalHeaders atomic.Value                   // stores headers
+	timeout       atomic.Int64                   // stores timeout
+	autoRedirect  atomic.Bool                    // stores autoRedirect
+	multipartMode atomic.Int64                   // stores MultipartMode
 }
 
 type RequestOverride struct {
@@ -50,30 +49,20 @@ type RequestOverride struct {
 	AutoRedirectDisabled *bool
 }
 
-func PtrBool(b bool) *bool {
-	return &b
-}
-
-func PtrInt(i int) *int {
-	return &i
-}
-
-func PtrInt32(i int32) *int32 {
-	return &i
-}
-
-func PtrInt64(i int64) *int64 {
-	return &i
-}
-
-func PtrString(s string) *string {
-	return &s
+type Request struct {
+	Headers Headers
+	Params  Params
+	JSON    JSONPayload
+	Form    FormKV
+	Data    FormData
+	Cookies Cookies
+	Auth    Auth
 }
 
 func NewClient() *HttpClient {
 	h := &HttpClient{
-		Retry: nil,
-		codec: DefaultJSONCodec,
+		Retry:     nil,
+		jsonCodec: DefaultJSONCodec,
 	}
 
 	// initialize defaults
@@ -87,6 +76,7 @@ func NewClient() *HttpClient {
 	h.timeout.Store(30)
 	h.autoRedirect.Store(false)
 	h.globalHeaders.Store(map[string]string{})
+	h.multipartMode.Store(int64(Buffered))
 
 	if jar, err := cookiejar.New(nil); err == nil {
 		h.jar.Store(jar)
@@ -117,18 +107,102 @@ func (h *HttpClient) loadHeaders() map[string]string {
 	return map[string]string{}
 }
 
-// SetHeader sets a global header on the client.
-// Passing value == "" removes the header.
-func (h *HttpClient) SetHeader(key, value string) {
-	current := h.loadHeaders()
-	newHeaders := make(map[string]string, len(current)+1)
-	maps.Copy(newHeaders, current)
-	if value == "" {
-		delete(newHeaders, key)
-	} else {
-		newHeaders[key] = value
+func buildMultipartBuffered(req *http.Request, f *FormData) error {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	for k, v := range f.Values {
+		if err := writer.WriteField(k, v); err != nil {
+			return err
+		}
 	}
-	h.globalHeaders.Store(newHeaders)
+
+	for field, file := range f.Files {
+		r, err := file.Open()
+		if err != nil {
+			return err
+		}
+
+		func() {
+			defer r.Close()
+			part, err := writer.CreateFormFile(field, file.Name())
+			if err != nil {
+				return
+			}
+			_, err = io.Copy(part, r)
+		}()
+	}
+
+	if err := writer.Close(); err != nil {
+		return err
+	}
+
+	buf := body.Bytes()
+
+	req.Body = io.NopCloser(bytes.NewReader(buf))
+	req.ContentLength = int64(len(buf))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(buf)), nil
+	}
+
+	return nil
+}
+
+func buildMultipartStream(req *http.Request, f *FormData) error {
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+
+	req.Body = pr
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.ContentLength = -1 // chunked
+
+	go func() {
+		defer pw.Close()
+		defer writer.Close()
+
+		for k, v := range f.Values {
+			if err := writer.WriteField(k, v); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+		}
+
+		for field, file := range f.Files {
+			r, err := file.Open()
+			if err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+
+			func() {
+				defer r.Close()
+
+				part, err := writer.CreateFormFile(field, file.Name())
+				if err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+
+				if _, err = io.Copy(part, r); err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+			}()
+		}
+	}()
+
+	return nil
+}
+
+func buildMultipart(req *http.Request, f *FormData, mode MultipartMode) error {
+	switch mode {
+	case Streaming:
+		return buildMultipartStream(req, f)
+	default:
+		return buildMultipartBuffered(req, f)
+	}
 }
 
 func (h *HttpClient) getTransport() *http.Transport {
@@ -206,119 +280,99 @@ func setS5Proxy(address string) (proxy.Dialer, error) {
 	return dialer, nil
 }
 
-// reqOptions construct a body
-func reqOptions(request *http.Request, opts any, codec JSONCodec) (*http.Request, error) {
-	switch t := opts.(type) {
-	case *RetryConfig:
-	case Auth:
-		request.SetBasicAuth(t[0], t[1])
-	case Cookies:
-		for _, c := range t {
-			request.AddCookie(c)
-		}
-	case FormData:
-		bodyBuf := &bytes.Buffer{}
-		bodyWriter := multipart.NewWriter(bodyBuf)
+// reqOptions construct request options.
+func reqOptions(request *http.Request, jsonCodec JSONCodec, multipartMode MultipartMode, opts ...any) (*http.Request, error) {
+	for _, opt := range opts {
+		switch t := opt.(type) {
+		case *RetryConfig, *RequestOverride, context.Context:
+			continue
+		case Auth:
+			request.SetBasicAuth(t.Username, t.Password)
+		case Cookies:
+			for _, c := range t {
+				request.AddCookie(c)
+			}
+		case FormData:
+			err := buildMultipart(request, &t, multipartMode)
+			if err != nil {
+				return nil, err
+			}
+		case FormKV:
+			query := make(URL.Values)
+			for k, v := range t {
+				query.Add(k, v)
+			}
+			reader := strings.NewReader(query.Encode())
+			snapshot := *reader
 
-		// Fill parameters
-		if t.Values != nil {
-			values := t.Values
-			for k, v := range values {
-				err := bodyWriter.WriteField(k, v)
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			request.ContentLength = int64(reader.Len())
+			request.Body = io.NopCloser(reader)
+			request.GetBody = func() (io.ReadCloser, error) {
+				r := snapshot
+				return io.NopCloser(&r), nil
+			}
+		case Headers:
+			for k, v := range t {
+				request.Header.Set(k, v)
+			}
+		case JSONPayload:
+			if t == nil || t.IsEmpty() {
+				return nil, fmt.Errorf("json payload is empty")
+			}
+
+			var bodyBytes []byte
+			var err error
+
+			switch v := t.(type) {
+			case RawJSON:
+				bodyBytes = v
+			default:
+				bodyBytes, err = jsonCodec.Marshal(v)
 				if err != nil {
 					return nil, err
 				}
 			}
-		}
 
-		// Fill files
-		if t.Files != nil {
-			files := t.Files
-			for fieldName, fileObj := range files {
-				switch f := fileObj.(type) {
-				case string:
-					file, err := os.Open(f)
-					if err != nil {
-						return nil, err
-					}
-					defer file.Close()
-					// create form data
-					fileWriter, err := bodyWriter.CreateFormFile(fieldName, filepath.Base(f))
-					if err != nil {
-						return nil, err
-					}
-					if _, err = io.Copy(fileWriter, file); err != nil {
-						return nil, err
-					}
-				case *FileInMemory:
-					fileWriter, err := bodyWriter.CreateFormFile(fieldName, f.Filename)
-					if err != nil {
-						return nil, err
-					}
-					if _, err := io.Copy(fileWriter, f.Reader); err != nil {
-						return nil, err
-					}
-				default:
-					return nil, fmt.Errorf("unsupported file type for field %s", fieldName)
-				}
+			request.Header.Set("Content-Type", "application/json")
+			request.ContentLength = int64(len(bodyBytes))
+			request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			request.GetBody = func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(bodyBytes)), nil
 			}
-		}
+		case Params:
+			query := make(URL.Values)
+			for k, v := range t {
+				query.Add(k, v)
+			}
+			request.URL.RawQuery = query.Encode()
+		case Request:
+			var inner []any
 
-		err := bodyWriter.Close()
-		if err != nil {
-			return nil, err
-		}
+			if !t.Headers.IsEmpty() {
+				inner = append(inner, t.Headers)
+			}
+			if !t.Params.IsEmpty() {
+				inner = append(inner, t.Params)
+			}
+			if !t.JSON.IsEmpty() {
+				inner = append(inner, t.JSON)
+			}
+			if !t.Form.IsEmpty() {
+				inner = append(inner, t.Form)
+			}
+			if !t.Data.IsEmpty() {
+				inner = append(inner, t.Data)
+			}
+			if !t.Cookies.IsEmpty() {
+				inner = append(inner, t.Cookies)
+			}
+			if !t.Auth.IsEmpty() {
+				inner = append(inner, t.Auth)
+			}
 
-		reader := bytes.NewBuffer(bodyBuf.Bytes())
-		buf := reader.Bytes()
-
-		request.ContentLength = int64(reader.Len())
-		request.Header.Set("Content-Type", bodyWriter.FormDataContentType())
-		request.Body = io.NopCloser(reader)
-		request.GetBody = func() (io.ReadCloser, error) {
-			r := bytes.NewReader(buf)
-			return io.NopCloser(r), nil
+			return reqOptions(request, jsonCodec, multipartMode, inner...)
 		}
-	case FormKV:
-		query := make(URL.Values)
-		for k, v := range t {
-			query.Add(k, v)
-		}
-		reader := strings.NewReader(query.Encode())
-		snapshot := *reader
-
-		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		request.ContentLength = int64(reader.Len())
-		request.Body = io.NopCloser(reader)
-		request.GetBody = func() (io.ReadCloser, error) {
-			r := snapshot
-			return io.NopCloser(&r), nil
-		}
-	case Headers:
-		for k, v := range t {
-			request.Header.Set(k, v)
-		}
-	case JSONData:
-		jsonByte, err := codec.Marshal(t)
-		if err != nil {
-			return nil, err
-		}
-		reader := bytes.NewReader(jsonByte)
-		snapshot := *reader
-
-		request.Header.Set("Content-Type", "application/json")
-		request.ContentLength = int64(reader.Len())
-		request.Body = io.NopCloser(reader)
-		request.GetBody = func() (io.ReadCloser, error) {
-			r := snapshot
-			return io.NopCloser(&r), nil
-		}
-	case Params:
-		query := make(URL.Values)
-		for k, v := range t {
-			query.Add(k, v)
-		}
-		request.URL.RawQuery = query.Encode()
 	}
 	return request, nil
 }
@@ -392,19 +446,55 @@ func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request, ret
 	return resp, err
 }
 
+func (h *HttpClient) SetMultipartMode(model MultipartMode) {
+	h.multipartMode.Store(int64(model))
+}
+
+// SetHeader sets a global header on the client.
+// Passing value == "" removes the header.
+func (h *HttpClient) SetHeader(key, value string) {
+	current := h.loadHeaders()
+	newHeaders := make(map[string]string, len(current)+1)
+	maps.Copy(newHeaders, current)
+	if value == "" {
+		delete(newHeaders, key)
+	} else {
+		newHeaders[key] = value
+	}
+	h.globalHeaders.Store(newHeaders)
+}
+
+// SetHeaders sets multiple global headers on the client.
+// If a value is "", the header will be removed.
+func (h *HttpClient) SetHeaders(headers map[string]string) {
+	current := h.loadHeaders()
+	newHeaders := make(map[string]string, len(current)+len(headers))
+	maps.Copy(newHeaders, current)
+
+	for k, v := range headers {
+		if v == "" {
+			delete(newHeaders, k)
+		} else {
+			newHeaders[k] = v
+		}
+	}
+
+	h.globalHeaders.Store(newHeaders)
+}
+
 // SetJSONCodec sets the JSON codec for this client instance
 // Pass nil to reset to the default encoding/json implementation
 func (h *HttpClient) SetJSONCodec(codec JSONCodec) {
 	if codec == nil {
-		h.codec = DefaultJSONCodec
+		h.jsonCodec = DefaultJSONCodec
 		return
 	}
-	h.codec = codec
+	h.jsonCodec = codec
 }
 
 // GetJSONCodec returns the JSON codec for this client instance
 func (h *HttpClient) GetJSONCodec() JSONCodec {
-	return h.codec
+	return h.jsonCodec
 }
 
 // SetTimeout Set timeout in seconds
@@ -520,16 +610,16 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 	var retryConfig *RetryConfig
 	var ctx context.Context
 
-	finalOpts := []any{}
+	multipartMode := MultipartMode(h.multipartMode.Load())
+
 	for _, opt := range opts {
-		if ro, ok := opt.(*RequestOverride); ok {
-			override = ro
-		} else if rc, ok := opt.(*RetryConfig); ok {
-			retryConfig = rc
-		} else if c, ok := opt.(context.Context); ok {
-			ctx = c
-		} else {
-			finalOpts = append(finalOpts, opt)
+		switch t := opt.(type) {
+		case *RequestOverride:
+			override = t
+		case *RetryConfig:
+			retryConfig = t
+		case context.Context:
+			ctx = t
 		}
 	}
 
@@ -555,11 +645,9 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 		request.Header.Set(k, v)
 	}
 
-	for _, opt := range finalOpts {
-		request, err = reqOptions(request, opt, h.codec)
-		if err != nil {
-			return nil, err
-		}
+	request, err = reqOptions(request, h.jsonCodec, multipartMode, opts...)
+	if err != nil {
+		return nil, err
 	}
 
 	if request.Header.Get("User-Agent") == "" {
@@ -617,6 +705,10 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 		effectiveRetryConfig = retryConfig
 	}
 
+	if multipartMode == Streaming && effectiveRetryConfig != nil && effectiveRetryConfig.MaxRetries > 1 {
+		return nil, fmt.Errorf("streaming multipart does not support retry")
+	}
+
 	// Send Data
 	reqForSend := request.Clone(ctx)
 	if request.GetBody != nil {
@@ -632,7 +724,7 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 	miniRes := new(MiniResponse)
 	miniRes.Request = request
 	miniRes.Response = response
-	miniRes.codec = h.codec
+	miniRes.jsonCodec = h.jsonCodec
 	return miniRes, nil
 }
 

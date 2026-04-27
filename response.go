@@ -12,7 +12,7 @@ import (
 type MiniResponse struct {
 	Request   *http.Request
 	Response  *http.Response
-	codec     JSONCodec
+	jsonCodec JSONCodec
 	bodyCache []byte
 }
 
@@ -66,7 +66,7 @@ func (res *MiniResponse) RawJSON() (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = res.codec.Unmarshal(rawData, &jsonData)
+	err = res.jsonCodec.Unmarshal(rawData, &jsonData)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func (res *MiniResponse) RawNumJSON() (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = res.codec.UnmarshalNumber(rawData, &jsonData)
+	err = res.jsonCodec.UnmarshalNumber(rawData, &jsonData)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func (res *MiniResponse) ReadNDJSON() (*NDJSONReader, error) {
 		return &NDJSONReader{
 			scanner: bufio.NewScanner(io.NopCloser(bytes.NewReader(res.bodyCache))),
 			closer:  io.NopCloser(bytes.NewReader(res.bodyCache)),
-			codec:   res.codec,
+			codec:   res.jsonCodec,
 		}, nil
 	}
 	if res.Response == nil || res.Response.Body == nil {
@@ -131,7 +131,7 @@ func (res *MiniResponse) ReadNDJSON() (*NDJSONReader, error) {
 	return &NDJSONReader{
 		scanner: bufio.NewScanner(body),
 		closer:  body,
-		codec:   res.codec,
+		codec:   res.jsonCodec,
 	}, nil
 }
 
@@ -218,7 +218,7 @@ func StreamNDJSONUnmarshal[T any](res *MiniResponse, callback func(item T) error
 		}
 
 		var item T
-		if err := res.codec.Unmarshal(event.Data, &item); err != nil {
+		if err := res.jsonCodec.Unmarshal(event.Data, &item); err != nil {
 			return fmt.Errorf("failed to unmarshal NDJSON: %w", err)
 		}
 

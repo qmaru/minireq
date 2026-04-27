@@ -119,7 +119,7 @@ func BenchmarkPostJSONParallel(b *testing.B) {
 		b.ResetTimer()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
-				res, err := minireq.Post(url, JSONData{"foo": "bar"})
+				res, err := minireq.Post(url, JSONObject{"foo": "bar"})
 				if err != nil {
 					b.Fatalf("minireq Post json failed: %v", err)
 				}
@@ -168,8 +168,8 @@ func BenchmarkPostFormParallel(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				res, err := minireq.Post(url, FormData{
-					Files: map[string]any{
-						"file": &FileInMemory{
+					Files: map[string]File{
+						"file": &MemoryFile{
 							Filename: "file1",
 							Reader:   bytes.NewReader(largeData),
 						},

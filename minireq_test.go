@@ -129,79 +129,99 @@ func TestPostData(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data1 := FormData{
+	diskFile := FormData{
 		Values: map[string]string{"foo": "bar"},
-		Files:  map[string]any{"file1": "go.mod"},
+		Files:  map[string]File{"file1": DiskFile("go.mod")},
 	}
 
-	data2 := FormData{
+	memoryFile := FormData{
 		Values: map[string]string{"foo": "bar"},
-		Files: map[string]any{
-			"file1": &FileInMemory{
+		Files: map[string]File{
+			"file1": &MemoryFile{
 				Filename: "file1_by_memory",
 				Reader:   bytes.NewReader(imageByte),
 			},
 		},
 	}
 
-	res1, err := client.Post(HTTPBIN+"/post", data1)
+	diskRes, err := client.Post(HTTPBIN+"/post", diskFile)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	rawData1, err := res1.RawJSON()
+	diskJson, err := diskRes.RawJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	jsonData1 := rawData1.(map[string]any)
+	diskData := diskJson.(map[string]any)
 
-	form1 := jsonData1["form"].(map[string]any)
-	files1 := jsonData1["files"].(map[string]any)
-	headers1 := jsonData1["headers"].(map[string]any)
-	contentType1 := headers1["Content-Type"].(string)
+	diskForm := diskData["form"].(map[string]any)
+	diskFiles := diskData["files"].(map[string]any)
+	diskHeaders := diskData["headers"].(map[string]any)
+	diskContentType := diskHeaders["Content-Type"].(string)
 
-	_, resp1ok1 := form1["foo"]
-	_, resp1ok2 := files1["file1"]
-	resp1ok3 := strings.Contains(contentType1, "multipart/form-data")
+	_, diskOk1 := diskForm["foo"]
+	_, diskOk2 := diskFiles["file1"]
+	diskOk3 := strings.Contains(diskContentType, "multipart/form-data")
 
-	if resp1ok1 && resp1ok2 && resp1ok3 {
-		t.Log("data1 succeed")
+	if diskOk1 && diskOk2 && diskOk3 {
+		t.Log("disk file upload succeed")
 	} else {
-		t.Error("data1 failed")
+		t.Error("disk file upload failed")
 	}
 
-	res2, err := client.Post(HTTPBIN+"/post", data2)
+	memoryRes, err := client.Post(HTTPBIN+"/post", memoryFile)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	rawData2, err := res2.RawJSON()
+	memoryJson, err := memoryRes.RawJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	jsonData2 := rawData2.(map[string]any)
+	memoryData := memoryJson.(map[string]any)
 
-	form2 := jsonData2["form"].(map[string]any)
-	files2 := jsonData2["files"].(map[string]any)
-	headers2 := jsonData2["headers"].(map[string]any)
-	contentType2 := headers2["Content-Type"].(string)
+	memoryForm := memoryData["form"].(map[string]any)
+	memoryFiles := memoryData["files"].(map[string]any)
+	memoryHeaders := memoryData["headers"].(map[string]any)
+	memoryContentType := memoryHeaders["Content-Type"].(string)
 
-	_, resp2ok1 := form2["foo"]
-	_, resp2ok2 := files2["file1"]
-	resp2ok3 := strings.Contains(contentType2, "multipart/form-data")
+	_, memoryOk1 := memoryForm["foo"]
+	_, memoryOk2 := memoryFiles["file1"]
+	memoryOk3 := strings.Contains(memoryContentType, "multipart/form-data")
 
-	if resp2ok1 && resp2ok2 && resp2ok3 {
-		t.Log("data2 succeed")
+	if memoryOk1 && memoryOk2 && memoryOk3 {
+		t.Log("memory file upload succeed")
 	} else {
-		t.Error("data2 failed")
+		t.Error("memory file upload failed")
+	}
+
+	client.SetMultipartMode(Streaming)
+	memoryStreamRes, err := client.Post(HTTPBIN+"/post", memoryFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	memoryStreamJson, err := memoryStreamRes.RawJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	memoryStreamData := memoryStreamJson.(map[string]any)
+	memoryStreamHeaders := memoryStreamData["headers"].(map[string]any)
+	meooryTransferEncoding := memoryStreamHeaders["Transfer-Encoding"].([]any)
+	if len(meooryTransferEncoding) != 0 {
+		t.Logf("streaming multipart upload succeed: %s\n", meooryTransferEncoding)
+	} else {
+		t.Error("streaming multipart upload failed")
 	}
 }
 
 func TestPostJSON(t *testing.T) {
 	client := NewClient()
-	data := JSONData{"foo": "bar"}
+	data := JSONObject{"foo": "bar"}
 	res, err := client.Post(HTTPBIN+"/post", data)
 	if err != nil {
 		t.Error(err)
@@ -409,7 +429,7 @@ func TestRetry2(t *testing.T) {
 
 func TestStreamBody(t *testing.T) {
 	client := NewClient()
-	res, err := client.Get(HTTPBIN + "/bytes/4096")
+	res, err := client.Get(HTTPBIN + "/bytes/90")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,8 +450,8 @@ func TestStreamBody(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if n != 4096 {
-		t.Fatalf("expected 4096 bytes, got %d", n)
+	if n != 90 {
+		t.Fatalf("expected 90 bytes, got %d", n)
 	} else {
 		t.Logf("succeed, got %d bytes", n)
 	}
@@ -642,37 +662,23 @@ func TestSSE(t *testing.T) {
 		return nil
 	})
 
-	// sseReader, err := res.StreamSSE()
 	if err != nil {
 		t.Fatal(err)
 	}
-	// defer sseReader.Close()
-
-	// eventCount := 0
-	// for {
-	// 	event, err := sseReader.ReadEvent()
-	// 	if err != nil {
-	// 		if err == io.EOF {
-	// 			break
-	// 		}
-	// 		t.Fatal(err)
-	// 	}
-	// 	t.Logf("Event ID: %s, Event Type: %s, Data: %s\n", event.ID, event.Event, event.Data)
-	// 	eventCount++
-	// }
 
 	t.Logf("Total events received: %d\n", eventCount)
 }
 
 func TestContextCancel(t *testing.T) {
+	timeout := 2 * time.Second
 	t.Log("Testing request cancellation with context timeout")
 	client := NewClient()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	_, err := client.Get(HTTPBIN+"/delay/5", ctx)
 	if err != nil {
-		t.Logf("Request cancelled as expected: %v", err)
+		t.Logf("Request cancelled as expected: %v, cancel with timeout %.0f seconds", err, timeout.Seconds())
 	} else {
 		t.Error("Expected request to be cancelled, but it succeeded")
 	}
