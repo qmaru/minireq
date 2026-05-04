@@ -377,6 +377,22 @@ func reqOptions(request *http.Request, jsonCodec JSONCodec, multipartMode Multip
 	return request, nil
 }
 
+func sleepWithContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return ctx.Err()
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request, retryConfig *RetryConfig) (*http.Response, error) {
 	var (
 		resp        *http.Response
@@ -388,7 +404,7 @@ func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request, ret
 	)
 
 	if retryConfig != nil {
-		maxRetries = retryConfig.MaxRetries
+		maxRetries = max(retryConfig.MaxRetries, 0)
 
 		if retryConfig.RetryPolicy != nil {
 			retryPolicy = retryConfig.RetryPolicy
@@ -409,7 +425,7 @@ func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request, ret
 			return nil, err
 		}
 		if attempt > 0 {
-			delay := retryDelay(attempt)
+			delay := nonNegativeDelay(retryDelay(attempt))
 			if onRetry != nil {
 				status := 0
 				if resp != nil {
@@ -422,7 +438,9 @@ func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request, ret
 					Delay:   delay,
 				})
 			}
-			time.Sleep(delay)
+			if err := sleepWithContext(request.Context(), delay); err != nil {
+				return nil, err
+			}
 		}
 
 		if request.GetBody != nil {
@@ -705,7 +723,7 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 		effectiveRetryConfig = retryConfig
 	}
 
-	if multipartMode == Streaming && effectiveRetryConfig != nil && effectiveRetryConfig.MaxRetries > 1 {
+	if multipartMode == Streaming && effectiveRetryConfig != nil && effectiveRetryConfig.MaxRetries > 0 {
 		return nil, fmt.Errorf("streaming multipart does not support retry")
 	}
 
