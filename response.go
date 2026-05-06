@@ -7,13 +7,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 type MiniResponse struct {
-	Request   *http.Request
-	Response  *http.Response
-	jsonCodec JSONCodec
-	bodyCache []byte
+	Request     *http.Request
+	Response    *http.Response
+	jsonCodec   JSONCodec
+	bodyCache   []byte
+	bodyErr     error
+	rawDataOnce sync.Once
 }
 
 // Close Close response body
@@ -22,55 +25,56 @@ func (res *MiniResponse) Close() error {
 		return nil
 	}
 
-	defer func() {
-		_ = res.Response.Body.Close()
-		res.Response.Body = nil
-	}()
+	body := res.Response.Body
+	res.Response.Body = nil
 
 	if res.bodyCache != nil {
-		return nil
+		return body.Close()
 	}
 
-	_, _ = io.Copy(io.Discard, res.Response.Body)
-	return nil
+	_, _ = io.Copy(io.Discard, body)
+	return body.Close()
 }
 
 // RawData bytes data
 func (res *MiniResponse) RawData() ([]byte, error) {
-	if res.bodyCache != nil {
-		return res.bodyCache, nil
-	}
+	res.rawDataOnce.Do(func() {
+		if res.Response == nil || res.Response.Body == nil {
+			res.bodyErr = fmt.Errorf("response or response body is nil")
+			return
+		}
 
-	if res.Response == nil || res.Response.Body == nil {
-		return nil, fmt.Errorf("response or response body is nil")
-	}
+		body := res.Response.Body
+		defer func() {
+			_ = body.Close()
+			res.Response.Body = nil
+		}()
 
-	body := res.Response.Body
-	defer func() {
-		_ = body.Close()
-		res.Response.Body = nil
-	}()
+		res.bodyCache, res.bodyErr = io.ReadAll(body)
+	})
 
-	bodyData, err := io.ReadAll(body)
-	if err != nil {
-		return nil, err
-	}
-	res.bodyCache = bodyData
-	return bodyData, nil
+	return res.bodyCache, res.bodyErr
 }
 
 // RawJSON JSON data
 func (res *MiniResponse) RawJSON() (any, error) {
 	var jsonData any
+
+	err := res.DecodeJSON(&jsonData)
+	if err != nil {
+		return nil, err
+	}
+
+	return jsonData, nil
+}
+
+// DecodeJSON decode json
+func (res *MiniResponse) DecodeJSON(v any) error {
 	rawData, err := res.RawData()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	err = res.jsonCodec.Unmarshal(rawData, &jsonData)
-	if err != nil {
-		return nil, err
-	}
-	return jsonData, nil
+	return res.jsonCodec.Unmarshal(rawData, v)
 }
 
 // RawNumJSON JSON data with real number
