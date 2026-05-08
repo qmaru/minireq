@@ -453,7 +453,8 @@ func (h *HttpClient) doWithRetry(client *http.Client, request *http.Request, ret
 
 		resp, err = client.Do(request)
 
-		if !retryPolicy(resp, err) {
+		shouldRetry := attempt < maxRetries && retryPolicy(resp, err)
+		if !shouldRetry {
 			break
 		}
 

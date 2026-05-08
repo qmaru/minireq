@@ -427,6 +427,50 @@ func TestRetry2(t *testing.T) {
 	t.Log("completed all concurrent requests")
 }
 
+func TestRetry3(t *testing.T) {
+	client := NewClient()
+	client.SetTimeout(30)
+
+	bodyText := "retry-final-body-still-readable"
+	bodyBase64 := base64.StdEncoding.EncodeToString([]byte(bodyText))
+	url := fmt.Sprintf("%s/mix/s=500/b64=%s", HTTPBIN, bodyBase64)
+
+	retryCount := 0
+	res, err := client.Get(url, &RetryConfig{
+		MaxRetries:  2,
+		RetryPolicy: RetryPolicyWithStatusCode(500),
+		RetryDelay:  RetryNoDelay(),
+		OnRetry: func(event RetryEvent) {
+			retryCount++
+			t.Logf("[Retry3] Attempt #%d | Status: %d | Delay: %s",
+				event.Attempt, event.Status, event.Delay)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Close()
+
+	if retryCount == 0 {
+		t.Fatal("expected retry to happen, but it did not")
+	}
+
+	if res.Response.StatusCode != 500 {
+		t.Fatalf("expected final status 500, got %d", res.Response.StatusCode)
+	}
+
+	body, err := io.ReadAll(res.Response.Body)
+	if err != nil {
+		t.Fatalf("expected final response body to remain readable, got error: %v", err)
+	}
+
+	if string(body) != bodyText {
+		t.Fatalf("expected final body %q, got %q", bodyText, string(body))
+	}
+
+	t.Logf("Retry3 final status: %d, retries: %d, body: %q", res.Response.StatusCode, retryCount, string(body))
+}
+
 func TestStreamBody(t *testing.T) {
 	client := NewClient()
 	res, err := client.Get(HTTPBIN + "/bytes/90")
