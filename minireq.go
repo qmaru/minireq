@@ -261,6 +261,66 @@ func (h *HttpClient) clearTransport() *http.Transport {
 	return old
 }
 
+func (h *HttpClient) getOrCreateJar() (http.CookieJar, error) {
+	if v := h.jar.Load(); v != nil {
+		if jar, ok := v.(http.CookieJar); ok && jar != nil {
+			return jar, nil
+		}
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	h.jar.Store(jar)
+	return jar, nil
+}
+
+type headerTransport struct {
+	base    http.RoundTripper
+	headers func() map[string]string
+}
+
+func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.Header = req.Header.Clone()
+
+	for k, v := range t.headers() {
+		if clone.Header.Get(k) == "" {
+			clone.Header.Set(k, v)
+		}
+	}
+
+	return t.base.RoundTrip(clone)
+}
+
+func (h *HttpClient) standardClient(timeout int64, autoRedirect bool) (*http.Client, error) {
+	jar, err := h.getOrCreateJar()
+	if err != nil {
+		return nil, err
+	}
+
+	baseTransport := h.getTransport()
+
+	client := &http.Client{
+		Jar:     jar,
+		Timeout: time.Duration(timeout) * time.Second,
+		Transport: &headerTransport{
+			base:    baseTransport,
+			headers: h.loadHeaders,
+		},
+	}
+
+	if autoRedirect {
+		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+	}
+
+	return client, nil
+}
+
 // setS5Proxy Set socks5 proxy
 func setS5Proxy(address string) (proxy.Dialer, error) {
 	addRule := regexp.MustCompile(`^((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})(\.((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})){3}:\d{1,5}$`)
@@ -516,6 +576,36 @@ func (h *HttpClient) GetJSONCodec() JSONCodec {
 	return h.jsonCodec
 }
 
+// StandardClient returns a configured net/http client for third-party integration.
+func (h *HttpClient) StandardClient() (*http.Client, error) {
+	timeout := int64(30)
+	if v := h.timeout.Load(); v != 0 {
+		timeout = v
+	}
+
+	return h.standardClient(timeout, h.autoRedirect.Load())
+}
+
+// Transport returns the underlying shared transport instance.
+// StandardClient wraps this transport to inject global headers.
+func (h *HttpClient) Transport() *http.Transport {
+	return h.getTransport()
+}
+
+// CookieJar returns the client's shared cookie jar.
+func (h *HttpClient) CookieJar() (http.CookieJar, error) {
+	return h.getOrCreateJar()
+}
+
+// SetCookieJar replaces the client's shared cookie jar.
+// Passing nil resets it to a fresh default jar.
+func (h *HttpClient) SetCookieJar(jar http.CookieJar) {
+	if jar == nil {
+		jar, _ = cookiejar.New(nil)
+	}
+	h.jar.Store(jar)
+}
+
 // SetTimeout Set timeout in seconds
 func (h *HttpClient) SetTimeout(i int64) {
 	h.timeout.Store(i)
@@ -688,34 +778,9 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 		}
 	}
 
-	transport := h.getTransport()
-
-	// cookie jar
-	var jar http.CookieJar
-	if v := h.jar.Load(); v != nil {
-		jar = v.(http.CookieJar)
-	}
-
-	if jar == nil {
-		j, err := cookiejar.New(nil)
-		if err != nil {
-			return nil, err
-		}
-		h.jar.Store(j)
-		jar = j
-	}
-
-	client := &http.Client{
-		Jar:       jar,
-		Timeout:   time.Duration(timeout) * time.Second,
-		Transport: transport,
-	}
-
-	// disable redirect
-	if autoRedirect {
-		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		}
+	client, err := h.standardClient(timeout, autoRedirect)
+	if err != nil {
+		return nil, err
 	}
 
 	// retry
