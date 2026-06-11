@@ -32,12 +32,17 @@ type transportConfig struct {
 	ResponseHeaderTimeout int    // response header timeout (seconds)
 }
 
+type rateLimiterHolder struct {
+	limiter RateLimiter
+}
+
 type HttpClient struct {
 	Retry         *RetryConfig                   // retry
 	jsonCodec     JSONCodec                      // per-client JSON codec
 	transport     atomic.Pointer[http.Transport] // stores http.Transport
 	cfg           atomic.Value                   // stores TransportConfig
 	jar           atomic.Value                   // stores http.CookieJar
+	limiter       atomic.Value                   // stores RateLimiter
 	globalHeaders atomic.Value                   // stores headers
 	timeout       atomic.Int64                   // stores timeout
 	autoRedirect  atomic.Bool                    // stores autoRedirect
@@ -105,6 +110,13 @@ func (h *HttpClient) loadHeaders() map[string]string {
 		return v.(map[string]string)
 	}
 	return map[string]string{}
+}
+
+func (h *HttpClient) loadLimiter() RateLimiter {
+	if v := h.limiter.Load(); v != nil {
+		return v.(rateLimiterHolder).limiter
+	}
+	return nil
 }
 
 func buildMultipartBuffered(req *http.Request, f *FormData) error {
@@ -529,6 +541,12 @@ func (h *HttpClient) SetMultipartMode(model MultipartMode) {
 	h.multipartMode.Store(int64(model))
 }
 
+// SetRateLimiter sets a client-wide rate limiter.
+// Passing nil disables rate limiting.
+func (h *HttpClient) SetRateLimiter(limiter RateLimiter) {
+	h.limiter.Store(rateLimiterHolder{limiter: limiter})
+}
+
 // SetHeader sets a global header on the client.
 // Passing value == "" removes the header.
 func (h *HttpClient) SetHeader(key, value string) {
@@ -791,6 +809,12 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 
 	if multipartMode == Streaming && effectiveRetryConfig != nil && effectiveRetryConfig.MaxRetries > 0 {
 		return nil, fmt.Errorf("streaming multipart does not support retry")
+	}
+
+	if limiter := h.loadLimiter(); limiter != nil {
+		if err := limiter.Wait(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	// Send Data

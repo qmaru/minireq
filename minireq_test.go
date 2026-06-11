@@ -727,3 +727,15 @@ func TestContextCancel(t *testing.T) {
 		t.Error("Expected request to be cancelled, but it succeeded")
 	}
 }
+
+func TestRatelimit(t *testing.T) {
+	client := NewClient()
+
+	rpmLimit, err := RateLimitFromRPM(30)
+	if err != nil {
+		t.Fatalf("Failed to create RPM rate limiter: %v", err)
+	}
+
+	client.SetRateLimiter(rpmLimit)
+	client.Get(HTTPBIN + "/get")
+}

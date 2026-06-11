@@ -1,6 +1,7 @@
 package minireq
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"os"
@@ -143,6 +144,11 @@ type OnRetry func(event RetryEvent)
 type RetryDelay func(attempt int) time.Duration
 
 type RetryPolicy func(resp *http.Response, err error) bool
+
+// RateLimiter controls request pacing before a request is sent.
+type RateLimiter interface {
+	Wait(ctx context.Context) error
+}
 
 // Deprecated: Use new(expr) in Go 1.26+, e.g. new(true).
 func PtrBool(b bool) *bool {
