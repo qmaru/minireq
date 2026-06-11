@@ -37,21 +37,28 @@ type rateLimiterHolder struct {
 }
 
 type HttpClient struct {
-	Retry         *RetryConfig                   // retry
-	jsonCodec     JSONCodec                      // per-client JSON codec
-	transport     atomic.Pointer[http.Transport] // stores http.Transport
-	cfg           atomic.Value                   // stores TransportConfig
-	jar           atomic.Value                   // stores http.CookieJar
-	limiter       atomic.Value                   // stores RateLimiter
-	globalHeaders atomic.Value                   // stores headers
-	timeout       atomic.Int64                   // stores timeout
-	autoRedirect  atomic.Bool                    // stores autoRedirect
-	multipartMode atomic.Int64                   // stores MultipartMode
+	Retry            *RetryConfig                   // retry
+	jsonCodec        JSONCodec                      // per-client JSON codec
+	transport        atomic.Pointer[http.Transport] // stores http.Transport
+	cfg              atomic.Value                   // stores TransportConfig
+	jar              atomic.Value                   // stores http.CookieJar
+	limiter          atomic.Value                   // stores RateLimiter
+	globalHeaders    atomic.Value                   // stores headers
+	timeout          atomic.Int64                   // stores timeout
+	redirectDisabled atomic.Bool                    // stores redirectDisabled
+	multipartMode    atomic.Int64                   // stores MultipartMode
 }
 
 type RequestOverride struct {
-	Timeout              *int64 // seconds
-	AutoRedirectDisabled *bool
+	Timeout          *int64 // seconds
+	RedirectDisabled *bool
+	Retry            *RetryConfig
+	RateLimit        *RateLimitOverride
+}
+
+type RateLimitOverride struct {
+	Limiter  RateLimiter
+	Disabled bool
 }
 
 type Request struct {
@@ -79,7 +86,7 @@ func NewClient() *HttpClient {
 
 	h.cfg.Store(defaultCfg)
 	h.timeout.Store(30)
-	h.autoRedirect.Store(false)
+	h.redirectDisabled.Store(false)
 	h.globalHeaders.Store(map[string]string{})
 	h.multipartMode.Store(int64(Buffered))
 
@@ -307,7 +314,7 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(clone)
 }
 
-func (h *HttpClient) standardClient(timeout int64, autoRedirect bool) (*http.Client, error) {
+func (h *HttpClient) standardClient(timeout int64, redirectDisabled bool) (*http.Client, error) {
 	jar, err := h.getOrCreateJar()
 	if err != nil {
 		return nil, err
@@ -324,7 +331,7 @@ func (h *HttpClient) standardClient(timeout int64, autoRedirect bool) (*http.Cli
 		},
 	}
 
-	if autoRedirect {
+	if redirectDisabled {
 		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
@@ -356,7 +363,7 @@ func setS5Proxy(address string) (proxy.Dialer, error) {
 func reqOptions(request *http.Request, jsonCodec JSONCodec, multipartMode MultipartMode, opts ...any) (*http.Request, error) {
 	for _, opt := range opts {
 		switch t := opt.(type) {
-		case *RetryConfig, *RequestOverride, context.Context:
+		case *RequestOverride, context.Context:
 			continue
 		case Auth:
 			request.SetBasicAuth(t.Username, t.Password)
@@ -601,7 +608,7 @@ func (h *HttpClient) StandardClient() (*http.Client, error) {
 		timeout = v
 	}
 
-	return h.standardClient(timeout, h.autoRedirect.Load())
+	return h.standardClient(timeout, h.redirectDisabled.Load())
 }
 
 // Transport returns the underlying shared transport instance.
@@ -629,12 +636,12 @@ func (h *HttpClient) SetTimeout(i int64) {
 	h.timeout.Store(i)
 }
 
-// DisableAutoRedirect Disable Redirect
-func (h *HttpClient) DisableAutoRedirect(enabled bool) {
-	h.autoRedirect.Store(enabled)
+// SetRedirectDisabled controls whether future requests stop following redirects.
+func (h *HttpClient) SetRedirectDisabled(disabled bool) {
+	h.redirectDisabled.Store(disabled)
 }
 
-// SetSocks5Proxy Set socks5 proxy
+// SetSocks5Proxy sets the SOCKS5 proxy for future requests.
 func (h *HttpClient) SetSocks5Proxy(addr string) {
 	cfg := h.loadConfig()
 	cfg.Socks5ProxyAddress = addr
@@ -647,7 +654,7 @@ func (h *HttpClient) SetSocks5Proxy(addr string) {
 	}
 }
 
-// SetHttpProxyURL Set http proxy
+// SetHttpProxyURL sets the HTTP proxy for future requests.
 func (h *HttpClient) SetHttpProxyURL(proxyURL string) {
 	cfg := h.loadConfig()
 	cfg.HttpProxyAddress = proxyURL
@@ -660,7 +667,7 @@ func (h *HttpClient) SetHttpProxyURL(proxyURL string) {
 	}
 }
 
-// SetMaxIdleConns Set Max Idle Connections
+// SetMaxIdleConns sets the transport pool size for future requests.
 func (h *HttpClient) SetMaxIdleConns(n int) {
 	cfg := h.loadConfig()
 	cfg.MaxIdleConns = n
@@ -670,7 +677,7 @@ func (h *HttpClient) SetMaxIdleConns(n int) {
 	}
 }
 
-// SetMaxIdleConnsPerHost Set Max Idle Connections Per Host
+// SetMaxIdleConnsPerHost sets the per-host transport pool size for future requests.
 func (h *HttpClient) SetMaxIdleConnsPerHost(n int) {
 	cfg := h.loadConfig()
 	cfg.MaxIdleConnsPerHost = n
@@ -680,7 +687,7 @@ func (h *HttpClient) SetMaxIdleConnsPerHost(n int) {
 	}
 }
 
-// SetIdleConnTimeout Set Idle Connection Timeout (seconds)
+// SetIdleConnTimeout sets the idle connection timeout for future requests.
 func (h *HttpClient) SetIdleConnTimeout(seconds int) {
 	cfg := h.loadConfig()
 	cfg.IdleConnTimeout = seconds
@@ -690,7 +697,7 @@ func (h *HttpClient) SetIdleConnTimeout(seconds int) {
 	}
 }
 
-// SetResponseHeaderTimeout Set Response Header Timeout (seconds)
+// SetResponseHeaderTimeout sets the response header timeout for future requests.
 func (h *HttpClient) SetResponseHeaderTimeout(seconds int) {
 	cfg := h.loadConfig()
 	cfg.ResponseHeaderTimeout = seconds
@@ -700,7 +707,7 @@ func (h *HttpClient) SetResponseHeaderTimeout(seconds int) {
 	}
 }
 
-// SetHTTP2 Enable HTTP2
+// SetHTTP2 enables or disables HTTP/2 for future requests.
 func (h *HttpClient) SetHTTP2(enabled bool) {
 	cfg := h.loadConfig()
 	cfg.HTTP2Enabled = enabled
@@ -710,7 +717,7 @@ func (h *HttpClient) SetHTTP2(enabled bool) {
 	}
 }
 
-// SetInsecure Allow Insecure
+// SetInsecure controls TLS verification for future requests.
 func (h *HttpClient) SetInsecure(enabled bool) {
 	cfg := h.loadConfig()
 	cfg.Insecure = enabled
@@ -720,7 +727,7 @@ func (h *HttpClient) SetInsecure(enabled bool) {
 	}
 }
 
-// SetTLSHandshakeTimeout Set TLS Handshake Timeout (seconds)
+// SetTLSHandshakeTimeout sets the TLS handshake timeout for future requests.
 func (h *HttpClient) SetTLSHandshakeTimeout(t int) {
 	cfg := h.loadConfig()
 	cfg.TLSHandshakeTimeout = t
@@ -734,7 +741,6 @@ func (h *HttpClient) SetTLSHandshakeTimeout(t int) {
 func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniResponse, error) {
 	var err error
 	var override *RequestOverride
-	var retryConfig *RetryConfig
 	var ctx context.Context
 
 	multipartMode := MultipartMode(h.multipartMode.Load())
@@ -742,10 +748,14 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 	for _, opt := range opts {
 		switch t := opt.(type) {
 		case *RequestOverride:
+			if override != nil {
+				return nil, fmt.Errorf("multiple RequestOverride options are not allowed")
+			}
 			override = t
-		case *RetryConfig:
-			retryConfig = t
 		case context.Context:
+			if ctx != nil {
+				return nil, fmt.Errorf("multiple context.Context options are not allowed")
+			}
 			ctx = t
 		}
 	}
@@ -785,33 +795,41 @@ func (h *HttpClient) RequestWithMethod(method, url string, opts ...any) (*MiniRe
 	if v := h.timeout.Load(); v != 0 {
 		timeout = v
 	}
-	autoRedirect := h.autoRedirect.Load()
+	redirectDisabled := h.redirectDisabled.Load()
+	limiter := h.loadLimiter()
 
 	if override != nil {
 		if override.Timeout != nil {
 			timeout = *override.Timeout
 		}
-		if override.AutoRedirectDisabled != nil {
-			autoRedirect = *override.AutoRedirectDisabled
+		if override.RedirectDisabled != nil {
+			redirectDisabled = *override.RedirectDisabled
+		}
+		if override.RateLimit != nil {
+			if override.RateLimit.Disabled {
+				limiter = nil
+			} else if override.RateLimit.Limiter != nil {
+				limiter = override.RateLimit.Limiter
+			}
 		}
 	}
 
-	client, err := h.standardClient(timeout, autoRedirect)
+	client, err := h.standardClient(timeout, redirectDisabled)
 	if err != nil {
 		return nil, err
 	}
 
 	// retry
 	effectiveRetryConfig := h.Retry
-	if retryConfig != nil {
-		effectiveRetryConfig = retryConfig
+	if override != nil && override.Retry != nil {
+		effectiveRetryConfig = override.Retry
 	}
 
 	if multipartMode == Streaming && effectiveRetryConfig != nil && effectiveRetryConfig.MaxRetries > 0 {
 		return nil, fmt.Errorf("streaming multipart does not support retry")
 	}
 
-	if limiter := h.loadLimiter(); limiter != nil {
+	if limiter != nil {
 		if err := limiter.Wait(ctx); err != nil {
 			return nil, err
 		}

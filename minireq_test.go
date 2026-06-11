@@ -337,7 +337,7 @@ func TestRetry2(t *testing.T) {
 		},
 	}
 
-	res1, err := client.Get(HTTPBIN+"/status/500", retryConfig1)
+	res1, err := client.Get(HTTPBIN+"/status/500", &RequestOverride{Retry: retryConfig1})
 	if err != nil {
 		t.Logf("Request 1 error: %v", err)
 	} else {
@@ -355,7 +355,7 @@ func TestRetry2(t *testing.T) {
 		},
 	}
 
-	res2, err := client.Get(HTTPBIN+"/status/429", retryConfig2)
+	res2, err := client.Get(HTTPBIN+"/status/429", &RequestOverride{Retry: retryConfig2})
 	if err != nil {
 		t.Logf("Request 2 error: %v", err)
 	} else {
@@ -382,7 +382,7 @@ func TestRetry2(t *testing.T) {
 			RetryPolicy: RetryPolicyWithStatusCodes(503),
 			RetryDelay:  RetryFixedDelay(50 * time.Millisecond),
 		}
-		res, err := client.Get(HTTPBIN+"/status/503", retryConf)
+		res, err := client.Get(HTTPBIN+"/status/503", &RequestOverride{Retry: retryConf})
 		if err != nil {
 			results <- fmt.Sprintf("Concurrent1 error: %v", err)
 		} else {
@@ -398,7 +398,7 @@ func TestRetry2(t *testing.T) {
 			RetryPolicy: RetryPolicyWithStatusCodes(502),
 			RetryDelay:  RetryFixedDelay(75 * time.Millisecond),
 		}
-		res, err := client.Get(HTTPBIN+"/status/502", retryConf)
+		res, err := client.Get(HTTPBIN+"/status/502", &RequestOverride{Retry: retryConf})
 		if err != nil {
 			results <- fmt.Sprintf("Concurrent2 error: %v", err)
 		} else {
@@ -436,14 +436,16 @@ func TestRetry3(t *testing.T) {
 	url := fmt.Sprintf("%s/mix/s=500/b64=%s", HTTPBIN, bodyBase64)
 
 	retryCount := 0
-	res, err := client.Get(url, &RetryConfig{
-		MaxRetries:  2,
-		RetryPolicy: RetryPolicyWithStatusCode(500),
-		RetryDelay:  RetryNoDelay(),
-		OnRetry: func(event RetryEvent) {
-			retryCount++
-			t.Logf("[Retry3] Attempt #%d | Status: %d | Delay: %s",
-				event.Attempt, event.Status, event.Delay)
+	res, err := client.Get(url, &RequestOverride{
+		Retry: &RetryConfig{
+			MaxRetries:  2,
+			RetryPolicy: RetryPolicyWithStatusCode(500),
+			RetryDelay:  RetryNoDelay(),
+			OnRetry: func(event RetryEvent) {
+				retryCount++
+				t.Logf("[Retry3] Attempt #%d | Status: %d | Delay: %s",
+					event.Attempt, event.Status, event.Delay)
+			},
 		},
 	})
 	if err != nil {
@@ -539,7 +541,7 @@ func TestAnySet(t *testing.T) {
 	t.Logf("After request 1 transport address: %s\n", transportAddr2)
 
 	t.Log("set redirect")
-	client.DisableAutoRedirect(true)
+	client.SetRedirectDisabled(true)
 	res, err = client.Get(HTTPBIN + "/redirect/3")
 	if err != nil {
 		t.Error(err)
@@ -571,7 +573,7 @@ func TestOverride(t *testing.T) {
 	transportAddr1 := fmt.Sprintf("%p", client.transport.Load())
 	t.Logf("First transport address: %s\n", transportAddr1)
 
-	res, err = client.Get(HTTPBIN+"/redirect/1", &RequestOverride{AutoRedirectDisabled: PtrBool(true)})
+	res, err = client.Get(HTTPBIN+"/redirect/1", &RequestOverride{RedirectDisabled: PtrBool(true)})
 	if err != nil {
 		t.Error(err)
 	} else {
