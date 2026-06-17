@@ -2,6 +2,7 @@ package minireq
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -16,6 +17,8 @@ const DefaultVer = "2.0.0"
 const DefaultUA = "MiniRequest/" + DefaultVer
 
 type MultipartMode int64
+
+type FormValue string
 
 const (
 	Buffered MultipartMode = iota
@@ -76,7 +79,7 @@ func (f *MemoryFile) Open() (io.ReadCloser, error) {
 }
 
 type FormData struct {
-	Values map[string]string
+	Values map[string]FormValue
 	Files  map[string]File
 }
 
@@ -173,4 +176,8 @@ func PtrInt64(i int64) *int64 {
 // Deprecated: Use new(expr) in Go 1.26+, e.g. new("hello").
 func PtrString(s string) *string {
 	return &s
+}
+
+func FV(v any) FormValue {
+	return FormValue(fmt.Sprint(v))
 }

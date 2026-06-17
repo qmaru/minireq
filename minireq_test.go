@@ -130,12 +130,12 @@ func TestPostData(t *testing.T) {
 	}
 
 	diskFile := FormData{
-		Values: map[string]string{"foo": "bar"},
+		Values: map[string]FormValue{"foo": FV("bar")},
 		Files:  map[string]File{"file1": DiskFile("go.mod")},
 	}
 
 	memoryFile := FormData{
-		Values: map[string]string{"foo": "bar"},
+		Values: map[string]FormValue{"foo": FV("bar")},
 		Files: map[string]File{
 			"file1": &MemoryFile{
 				Filename: "file1_by_memory",
