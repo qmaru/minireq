@@ -131,7 +131,12 @@ func buildMultipartBuffered(req *http.Request, f *FormData) error {
 	writer := multipart.NewWriter(body)
 
 	for k, v := range f.Values {
-		if err := writer.WriteField(k, string(v)); err != nil {
+		vs, err := formValue(v)
+		if err != nil {
+			return err
+		}
+
+		if err := writer.WriteField(k, vs); err != nil {
 			return err
 		}
 	}
@@ -182,7 +187,12 @@ func buildMultipartStream(req *http.Request, f *FormData) error {
 		defer writer.Close()
 
 		for k, v := range f.Values {
-			if err := writer.WriteField(k, string(v)); err != nil {
+			vs, err := formValue(v)
+			if err != nil {
+				return
+			}
+
+			if err := writer.WriteField(k, vs); err != nil {
 				pw.CloseWithError(err)
 				return
 			}

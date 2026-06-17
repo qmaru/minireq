@@ -2,11 +2,12 @@ package minireq
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -17,8 +18,6 @@ const DefaultVer = "2.0.0"
 const DefaultUA = "MiniRequest/" + DefaultVer
 
 type MultipartMode int64
-
-type FormValue string
 
 const (
 	Buffered MultipartMode = iota
@@ -79,7 +78,7 @@ func (f *MemoryFile) Open() (io.ReadCloser, error) {
 }
 
 type FormData struct {
-	Values map[string]FormValue
+	Values map[string]any
 	Files  map[string]File
 }
 
@@ -178,6 +177,23 @@ func PtrString(s string) *string {
 	return &s
 }
 
-func FV(v any) FormValue {
-	return FormValue(fmt.Sprint(v))
+func formValue(v any) (string, error) {
+	switch x := v.(type) {
+	case string:
+		return x, nil
+	case bool:
+		return strconv.FormatBool(x), nil
+	case int:
+		return strconv.Itoa(x), nil
+	case int64:
+		return strconv.FormatInt(x, 10), nil
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64), nil
+	}
+
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
