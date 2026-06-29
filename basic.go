@@ -125,6 +125,10 @@ func (s JSONStruct[T]) IsEmpty() bool {
 	return false
 }
 
+func (s JSONStruct[T]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.V)
+}
+
 type JSONRaw []byte
 
 func (JSONRaw) isJSONPayload() {}
